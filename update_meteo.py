@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 # Configuración y constantes
-URL = "https://meteobahia.com.ar/scripts/forecast/for-pfp.xml"
+URL = "https://meteobahia.com.ar/scripts/forecast/for-cf.xml"
 OUT = Path("meteo_daily.csv")
 START = datetime(2026, 1, 1)
 
