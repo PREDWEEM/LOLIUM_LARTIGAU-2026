@@ -56,7 +56,7 @@ df_clima['Fecha'] = pd.to_datetime(df_clima['Fecha'])
 df_clima['Julian_days'] = df_clima['Fecha'].dt.dayofyear
 
 # Cargar datos de campo
-df_campo = pd.read_csv('VALIDA.xlsx - Hoja1.csv')
+df_campo = pd.read_csv('VALIDA.xlsx')
 df_campo.columns = df_campo.columns.str.strip()
 df_campo['FECHA'] = pd.to_datetime(df_campo['FECHA'])
 
