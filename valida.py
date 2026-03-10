@@ -1,77 +1,126 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.signal import find_peaks
-from sklearn.metrics import mean_squared_error
 
-# 1. MOTOR DE PREDICCIÓN (Basado en app_emergencia.py)
-class NeuralModel:
+# ==========================================
+# 1. DEFINICIÓN DEL MODELO (Arquitectura RNA)
+# ==========================================
+class PREDWEEM_Model:
     def __init__(self, IW, bIW, LW, bLW):
-        self.IW, self.bIW, self.LW, self.bLW = IW, bIW, LW, bLW
+        self.IW = IW   # Pesos entrada
+        self.bIW = bIW # Bias entrada
+        self.LW = LW   # Pesos salida
+        self.bLW = bLW # Bias salida
+        # Rangos de normalización del modelo original
         self.input_min = np.array([1, 0, -7, 0])
         self.input_max = np.array([300, 41, 25.5, 84])
 
     def normalize(self, X):
         return 2 * (X - self.input_min) / (self.input_max - self.input_min) - 1
 
-    def predict(self, Xreal):
-        Xn = self.normalize(Xreal)
-        emer = []
-        for x in Xn:
+    def predict(self, X_raw):
+        # Normalización de entradas
+        X_norm = self.normalize(X_raw)
+        
+        # Propagación hacia adelante
+        emer_list = []
+        for x in X_norm:
+            # Capa Oculta (Tanh)
             z1 = self.IW.T @ x + self.bIW
             a1 = np.tanh(z1)
+            # Capa Salida (Tanh + Escalamiento)
             z2 = np.dot(self.LW, a1) + self.bLW
-            emer.append(np.tanh(z2))
-        emer = (np.array(emer).flatten() + 1) / 2
-        return np.diff(np.cumsum(emer), prepend=0)
+            val = (np.tanh(z2) + 1) / 2
+            emer_list.append(val)
+        
+        # Cálculo de tasa diaria (Diferencial)
+        emer_cum = np.cumsum(np.array(emer_list).flatten())
+        emer_rel = np.diff(emer_cum, prepend=0)
+        return np.maximum(emer_rel, 0.0)
 
-# 2. CARGA DE DATOS Y EJECUCIÓN DEL MODELO
-# Cargar pesos y clima
-IW, LW = np.load('IW.npy'), np.load('LW.npy')
-bIW, bLW = np.load('bias_IW.npy'), np.load('bias_out.npy')
-df_meteo = pd.read_csv('meteo_daily.csv', parse_dates=['Fecha'])
+# ==========================================
+# 2. CARGA Y PROCESAMIENTO DE DATOS
+# ==========================================
+# Cargar archivos de pesos
+iw = np.load('IW.npy')
+lw = np.load('LW.npy')
+biw = np.load('bias_IW.npy')
+blw = np.load('bias_out.npy')
 
-# Ejecutar predicción
-model = NeuralModel(IW, bIW, LW, bLW)
-X = df_meteo[["Julian_days", "TMAX", "TMIN", "Prec"]].to_numpy(float)
-df_meteo['EMERREL'] = model.predict(X)
+# Cargar clima y asegurar nombres de columnas
+df_clima = pd.read_csv('meteo_daily.csv')
+df_clima.columns = df_clima.columns.str.strip()
+df_clima['Fecha'] = pd.to_datetime(df_clima['Fecha'])
 
-# Aplicar restricciones biológicas (Filtro del proyecto)
-df_meteo['Prec_sum'] = df_meteo['Prec'].rolling(window=21, min_periods=1).sum()
-df_meteo.loc[(df_meteo['Prec_sum'] < 20) | (df_meteo['Fecha'].dt.dayofyear <= 25), 'EMERREL'] = 0
+# --- SOLUCIÓN AL KEYERROR: Crear Julian_days ---
+df_clima['Julian_days'] = df_clima['Fecha'].dt.dayofyear
 
-# 3. PROCESAMIENTO DE VERDAD DE CAMPO (Ground Truth)
-df_campo = pd.read_csv('VALIDA.xlsx - Hoja1.csv', parse_dates=['FECHA'])
-# Normalizar densidad absoluta (PLM2) a relativa (0-1)
+# Cargar datos de campo
+df_campo = pd.read_csv('VALIDA.xlsx - Hoja1.csv')
+df_campo.columns = df_campo.columns.str.strip()
+df_campo['FECHA'] = pd.to_datetime(df_campo['FECHA'])
+
+# ==========================================
+# 3. EJECUCIÓN DE LA PREDICCIÓN
+# ==========================================
+model = PREDWEEM_Model(iw, biw, lw, blw)
+
+# Selección de features: [Julian_days, TMAX, TMIN, Prec]
+X_input = df_clima[["Julian_days", "TMAX", "TMIN", "Prec"]].to_numpy(float)
+df_clima['EMERREL'] = model.predict(X_input)
+
+# --- APLICAR RESTRICCIONES BIOLÓGICAS ---
+# 1. Ventana Hídrica: Suma de lluvia 21 días >= 20mm
+df_clima['Prec_sum_21d'] = df_clima['Prec'].rolling(window=21, min_periods=1).sum()
+df_clima.loc[df_clima['Prec_sum_21d'] < 20, 'EMERREL'] = 0.0
+
+# 2. Restricción de fecha: No hay emergencia antes del día 25
+df_clima.loc[df_clima['Julian_days'] <= 25, 'EMERREL'] = 0.0
+
+# ==========================================
+# 4. MÓDULO DE VALIDACIÓN (CÁLCULO MANUAL)
+# ==========================================
+# Normalizar campo: PLM2 (absoluto) -> ER_obs (relativo 0-1)
 df_campo['ER_obs'] = df_campo['PLM2'] / df_campo['PLM2'].max()
 
-# Sincronizar series temporales
-df_val = pd.merge(df_meteo[['Fecha', 'EMERREL']], 
-                  df_campo[['FECHA', 'ER_obs']], 
-                  left_on='Fecha', right_on='FECHA', how='inner')
+# Sincronizar por fecha
+df_val = pd.merge(
+    df_clima[['Fecha', 'EMERREL']], 
+    df_campo[['FECHA', 'ER_obs']], 
+    left_on='Fecha', right_on='FECHA', how='inner'
+)
 
-# 4. CÁLCULO DE MÉTRICAS ESTADÍSTICAS
-rmse = np.sqrt(mean_squared_error(df_val['ER_obs'], df_val['EMERREL']))
-# Eficiencia de Nash-Sutcliffe (NSE)
-nse = 1 - (np.sum((df_val['ER_obs'] - df_val['EMERREL'])**2) / 
-           np.sum((df_val['ER_obs'] - df_val['ER_obs'].mean())**2))
+# Métricas Manuales (Sin Sklearn)
+y_obs = df_val['ER_obs'].values
+y_pred = df_val['EMERREL'].values
 
-# 5. DETECCIÓN DE PICOS (Frecuencia y Magnitud)
-peaks_pred, _ = find_peaks(df_meteo['EMERREL'], height=0.15, distance=7)
-peaks_obs, _ = find_peaks(df_val['ER_obs'], height=0.1)
+if len(y_obs) > 0:
+    rmse = np.sqrt(np.mean((y_obs - y_pred)**2))
+    nse = 1 - (np.sum((y_obs - y_pred)**2) / np.sum((y_obs - np.mean(y_obs))**2))
+else:
+    rmse, nse = 0, 0
 
-# 6. VISUALIZACIÓN DE VALIDACIÓN
+# ==========================================
+# 5. VISUALIZACIÓN FINAL
+# ==========================================
 plt.figure(figsize=(12, 6))
-plt.plot(df_meteo['Fecha'], df_meteo['EMERREL'], label='Predicción RNA (EMERREL)', color='green', alpha=0.7)
-plt.scatter(df_campo['FECHA'], df_campo['ER_obs'], color='red', label='Observado (Normalizado)', zorder=5)
 
+# Serie predicha
+plt.plot(df_clima['Fecha'], df_clima['EMERREL'], color='forestgreen', 
+         label='Predicción Modelo (Relativa)', linewidth=2)
+plt.fill_between(df_clima['Fecha'], 0, df_clima['EMERREL'], color='green', alpha=0.1)
 
+# Datos de campo
+plt.scatter(df_campo['FECHA'], df_campo['ER_obs'], color='red', s=80, 
+            label='Verdad de Campo (Normalizada)', edgecolor='black', zorder=5)
 
-plt.title(f'Validación de Modelo: NSE = {nse:.2f} | RMSE = {rmse:.3f}')
-plt.xlabel('Fecha')
-plt.ylabel('Emergencia Relativa')
+plt.title(f'Validación Científica PREDWEEM\nRMSE: {rmse:.3f} | NSE: {nse:.3f}', fontsize=14)
+plt.ylabel('Tasa de Emergencia (0 - 1)')
 plt.legend()
-plt.grid(True, linestyle='--', alpha=0.5)
-plt.show()
+plt.grid(True, alpha=0.3)
+plt.tight_layout()
 
-print(f"Validación Completada.\nNSE: {nse:.4f}\nRMSE: {rmse:.44f}")
+# Guardar y mostrar
+plt.savefig('resultado_validacion.png')
+print(f"Validación terminada.\nRMSE: {rmse:.4f}\nNSE: {nse:.4f}")
+print(df_val[['Fecha', 'EMERREL', 'ER_obs']])
