@@ -16,7 +16,7 @@ st.set_page_config(page_title="PREDWEEM - Validador de Sincronía", layout="wide
 def categorizar_emergencia(valor):
     if valor >= 0.5:
         return "ALTA"
-    elif 0.15 <= valor < 0.5:
+    elif 0.25 <= valor < 0.5:
         return "INTERMEDIA"
     else:
         return "BAJA/NULA"
@@ -133,7 +133,7 @@ if f_meteo and f_valida:
         # Gráfico de Validación
         fig, ax = plt.subplots(figsize=(12, 5))
         ax.axhspan(0.5, 1.1, color='red', alpha=0.07, label='Riesgo Alto')
-        ax.axhspan(0.15, 0.5, color='orange', alpha=0.07, label='Riesgo Medio')
+        ax.axhspan(0.25, 0.5, color='orange', alpha=0.07, label='Riesgo Medio')
         ax.plot(df_clima['Fecha'], df_clima['EMERREL'], color='green', lw=1.5, label='Modelo')
         ax.scatter(df_v['Fecha'], df_v['Obs'], color='black', label='Campo')
         ax.legend(loc='upper center', bbox_to_anchor=(0.5, 1.15), ncol=4, frameon=False)
