@@ -4,13 +4,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 
-# --- CONFIGURACIÓN ---
-st.set_page_config(page_title="PREDWEEM - Categorización de Magnitud", layout="wide", page_icon="🌾")
+# --- CONFIGURACIÓN DE PÁGINA ---
+st.set_page_config(page_title="PREDWEEM - Calibrador de Magnitud", layout="wide", page_icon="🌾")
 
 # ==========================================
 # 1. FUNCIONES DE CATEGORIZACIÓN Y MÉTRICAS
 # ==========================================
 def categorizar_emergencia(valor):
+    """Categoriza la magnitud según los umbrales definidos por Guillermo."""
     if valor >= 0.5:
         return "ALTA"
     elif 0.15 <= valor < 0.5:
@@ -19,28 +20,34 @@ def categorizar_emergencia(valor):
         return "BAJA/NULA"
 
 def calcular_metricas_avanzadas(obs, pred):
-    # Métricas Continuas
+    """Calcula el desempeño numérico y de clasificación."""
+    # Evitar divisiones por cero
+    if np.std(obs) == 0: return 0, 0, 0, 0, [], []
+    
+    # NSE (Nash-Sutcliffe)
     nse = 1 - (np.sum((obs - pred)**2) / np.sum((obs - np.mean(obs))**2))
+    
+    # PBIAS (Percent Bias)
     pbias = 100 * (np.sum(obs - pred) / np.sum(obs))
     
-    # KGE
-    r = np.corrcoef(obs, pred)[0, 1] if np.std(obs) > 0 and np.std(pred) > 0 else 0
-    beta = np.mean(pred) / np.mean(obs) if np.mean(obs) > 0 else 1
+    # KGE (Kling-Gupta Efficiency)
+    r = np.corrcoef(obs, pred)[0, 1]
+    beta = np.mean(pred) / np.mean(obs)
     cv_obs = np.std(obs) / np.mean(obs) if np.mean(obs) != 0 else 1
     cv_pred = np.std(pred) / np.mean(pred) if np.mean(pred) != 0 else 1
     gamma = cv_pred / cv_obs
     kge = 1 - np.sqrt((r - 1)**2 + (beta - 1)**2 + (gamma - 1)**2)
     
-    # Métricas de Categoría (Aciertos)
+    # Exactitud por Categorías (Aciertos en Magnitud)
     cat_obs = [categorizar_emergencia(v) for v in obs]
     cat_pred = [categorizar_emergencia(v) for v in pred]
     aciertos = sum(1 for o, p in zip(cat_obs, cat_pred) if o == p)
-    accuracy_cat = (aciertos / len(obs)) * 100 if len(obs) > 0 else 0
+    accuracy_cat = (aciertos / len(obs)) * 100
     
     return nse, kge, pbias, accuracy_cat, cat_obs, cat_pred
 
 # ==========================================
-# 2. MODELO NEURONAL
+# 2. ARQUITECTURA DE LA RED NEURONAL
 # ==========================================
 class PREDWEEM_ANN:
     def __init__(self, IW, bIW, LW, bLW):
@@ -60,83 +67,116 @@ class PREDWEEM_ANN:
         return np.maximum(emer.flatten(), 0)
 
 # ==========================================
-# 3. UI Y FLUJO PRINCIPAL
+# 3. INTERFAZ DE USUARIO (UI)
 # ==========================================
 st.title("🌾 PREDWEEM: Análisis de Magnitud y Riesgo")
+st.markdown("Calibración dinámica considerando categorías de intensidad y período de latencia inicial.")
 
-st.sidebar.header("⚙️ Calibración")
+# --- SIDEBAR ---
+st.sidebar.header("⚙️ Parámetros de Calibración")
 umbral_h = st.sidebar.slider("Umbral Hídrico (mm)", 0, 60, 20)
 ventana_dias = st.sidebar.slider("Ventana de Tolerancia (Días)", 1, 14, 7)
 
-f_meteo = st.file_uploader("Meteo Daily", type=['csv'])
-f_valida = st.file_uploader("Valida Excel", type=['xlsx'])
+st.subheader("📂 Carga de Datos")
+col_a, col_b = st.columns(2)
+with col_a:
+    f_meteo = st.file_uploader("Subir meteo_daily.csv", type=['csv'])
+with col_b:
+    f_valida = st.file_uploader("Subir VALIDA.xlsx", type=['xlsx'])
 
+# ==========================================
+# 4. MOTOR DE CÁLCULO
+# ==========================================
 if f_meteo and f_valida:
     try:
-        # Carga
+        # 4.1 Procesamiento de Datos
         df_clima = pd.read_csv(f_meteo)
+        df_clima.columns = df_clima.columns.str.strip()
         df_clima['Fecha'] = pd.to_datetime(df_clima['Fecha'])
         df_clima['Julian_days'] = df_clima['Fecha'].dt.dayofyear
+        
         df_campo = pd.read_excel(f_valida)
+        df_campo.columns = df_campo.columns.str.strip()
         df_campo['FECHA'] = pd.to_datetime(df_campo['FECHA'])
 
-        # Pesos
-        iw, lw = np.load('IW.npy'), np.load('LW.npy')
-        biw, blw = np.load('bias_IW.npy'), np.load('bias_out.npy')
-        
-        # Predicción
+        # Carga de Pesos (deben estar en la carpeta del script)
+        files = ['IW.npy', 'LW.npy', 'bias_IW.npy', 'bias_out.npy']
+        if all(os.path.exists(f) for f in files):
+            iw, lw = np.load('IW.npy'), np.load('LW.npy')
+            biw, blw = np.load('bias_IW.npy'), np.load('bias_out.npy')
+        else:
+            st.error("No se encontraron los archivos .npy en el directorio.")
+            st.stop()
+
+        # 4.2 Predicción de la Red Neuronal
         model = PREDWEEM_ANN(iw, biw, lw, blw)
         X_input = df_clima[["Julian_days", "TMAX", "TMIN", "Prec"]].to_numpy(float)
         df_clima['EMERREL'] = model.predict(X_input)
-        
-        # Filtro hídrico
+
+        # 4.3 APLICACIÓN DE RESTRICCIONES (UMBRALES)
+        # 1. Filtro Hídrico (Lluvia acumulada 21 días)
         df_clima['Prec_sum'] = df_clima['Prec'].rolling(window=21, min_periods=1).sum()
         df_clima.loc[df_clima['Prec_sum'] < umbral_h, 'EMERREL'] = 0.0
         
-        # Validación
+        # 2. RESTRICCIÓN DE 25 DÍAS INICIALES (Emergencia Cero)
+        df_clima.loc[df_clima['Julian_days'] <= 25, 'EMERREL'] = 0.0
+
+        # 4.4 Validación de Campo
         df_campo['ER_obs'] = df_campo['PLM2'] / df_campo['PLM2'].max()
-        res = []
+        resultados = []
         radio = ventana_dias // 2
+
         for _, row in df_campo.iterrows():
             mask = (df_clima['Fecha'] >= row['FECHA'] - pd.Timedelta(days=radio)) & \
                    (df_clima['Fecha'] <= row['FECHA'] + pd.Timedelta(days=radio))
-            max_sim = df_clima.loc[mask, 'EMERREL'].max() if not df_clima[mask].empty else 0
-            res.append({'Fecha': row['FECHA'], 'Obs': row['ER_obs'], 'Pred': max_sim})
-        
-        df_v = pd.DataFrame(res)
-        
-        # Métricas
+            max_p = df_clima.loc[mask, 'EMERREL'].max() if not df_clima[mask].empty else 0
+            resultados.append({'Fecha': row['FECHA'], 'Obs': row['ER_obs'], 'Pred': max_p})
+
+        df_v = pd.DataFrame(resultados)
+
+        # 4.5 Cálculo de Métricas
         nse, kge, pbias, acc_cat, c_obs, c_pred = calcular_metricas_avanzadas(df_v['Obs'].values, df_v['Pred'].values)
 
-        # Dashboard
+        # ==========================================
+        # 5. DASHBOARD Y VISUALIZACIÓN
+        # ==========================================
         st.divider()
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("KGE (Tendencia)", f"{kge:.2f}")
-        m2.metric("PBIAS (Magnitud)", f"{pbias:.1f}%")
-        m3.metric("Acierto Categoría", f"{acc_cat:.1f}%")
-        m4.metric("Precisión Clasificación", "ALTA/INT" if acc_cat > 70 else "BAJA")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("KGE (Tendencia)", f"{kge:.2f}")
+        c2.metric("PBIAS (Sesgo)", f"{pbias:.1f}%")
+        c3.metric("Acierto Magnitud", f"{acc_cat:.1f}%")
+        c4.metric("NSE (Eficiencia)", f"{nse:.2f}")
 
-        # Comparativa Visual de Categorías
-        st.subheader("🎯 Validación de Nivel de Emergencia")
-        df_v['Cat_Obs'] = c_obs
-        df_v['Cat_Pred'] = c_pred
-        
-        # Colores para la tabla
-        def color_cat(val):
-            color = '#ffcdd2' if val == 'ALTA' else '#fff9c4' if val == 'INTERMEDIA' else '#c8e6c9'
-            return f'background-color: {color}'
-        
-        st.dataframe(df_v.style.applymap(color_cat, subset=['Cat_Obs', 'Cat_Pred']))
-
-        # Gráfico con sombreado de magnitud
+        # Gráfico principal con zonas de riesgo
         fig, ax = plt.subplots(figsize=(12, 5))
-        ax.axhspan(0.5, 1.0, color='red', alpha=0.1, label='Riesgo Alto')
-        ax.axhspan(0.15, 0.5, color='orange', alpha=0.1, label='Riesgo Intermedio')
-        ax.plot(df_clima['Fecha'], df_clima['EMERREL'], color='green', label='Simulación')
-        ax.scatter(df_v['Fecha'], df_v['Obs'], color='black', label='Campo', zorder=5)
-        ax.set_ylim(0, 1)
-        ax.legend()
+        ax.axhspan(0.5, 1.0, color='red', alpha=0.08, label='Riesgo Alto (≥0.5)')
+        ax.axhspan(0.15, 0.5, color='orange', alpha=0.08, label='Riesgo Intermedio (0.15-0.49)')
+        ax.axhspan(0.0, 0.15, color='green', alpha=0.05, label='Riesgo Bajo (<0.15)')
+        
+        ax.plot(df_clima['Fecha'], df_clima['EMERREL'], color='#1b5e20', lw=2, label='Modelo PREDWEEM')
+        ax.scatter(df_v['Fecha'], df_v['Obs'], color='black', s=100, label='Observaciones Campo', zorder=5)
+        
+        # Marcar la zona de los primeros 25 días
+        ax.axvspan(df_clima['Fecha'].iloc[0], df_clima['Fecha'].iloc[0] + pd.Timedelta(days=25), 
+                   color='gray', alpha=0.2, label='Período Latencia (0-25d)')
+
+        ax.set_ylabel("Emergencia Relativa")
+        ax.set_ylim(0, 1.05)
+        ax.legend(loc='upper right', fontsize='small', ncol=2)
+        ax.grid(axis='y', alpha=0.3)
         st.pyplot(fig)
 
+        # Tabla Comparativa de Categorías
+        with st.expander("🔍 Ver Detalle de Clasificación por Fecha"):
+            df_v['Cat_Obs'] = c_obs
+            df_v['Cat_Pred'] = c_pred
+            
+            def style_categories(val):
+                if val == "ALTA": return 'background-color: #ffcdd2; color: #b71c1c'
+                if val == "INTERMEDIA": return 'background-color: #fff9c4; color: #f57f17'
+                return 'background-color: #c8e6c9; color: #2e7d32'
+
+            st.dataframe(df_v.style.applymap(style_categories, subset=['Cat_Obs', 'Cat_Pred']))
+
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Error en el procesamiento: {e}")
