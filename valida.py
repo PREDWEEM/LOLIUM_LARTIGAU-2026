@@ -161,7 +161,7 @@ if f_meteo and f_valida:
         ax.hlines(y=df_v['Obs'], 
                   xmin=df_v['Fecha_Conteo'] - pd.Timedelta(days=ventana_dias), 
                   xmax=df_v['Fecha_Conteo'] + pd.Timedelta(days=ventana_dias), 
-                  color='gray', linestyle='-', zorder=3, alpha=0.5, linewidth=2)
+                  color='gray', linestyle='-', zorder=2, alpha=0.5, linewidth=2)
         
         # Puntos de conteo en campo
         ax.scatter(df_v['Fecha_Conteo'], df_v['Obs'], color='black', s=60, zorder=5, label=f'Conteo (±{ventana_dias}d)')
