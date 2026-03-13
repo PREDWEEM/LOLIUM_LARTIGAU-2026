@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # ===============================================================
 # 🌾 PREDWEEM INTEGRAL vK4.4 — LOLIUM LARTIGAU 2026
-# Actualización: PEC calculado estrictamente hasta el día de control
+# Actualización: Sincronía (Pearson) por Intervalos de Monitoreo
 # ===============================================================
 
 import streamlit as st
@@ -107,7 +107,6 @@ class PracticalANNModel:
         return 2 * (X - self.input_min) / (self.input_max - self.input_min) - 1
 
     def predict(self, Xreal):
-        # LÓGICA EXACTA DEL MODELO ORIGINAL ADJUNTO
         Xn = self.normalize(Xreal)
         emer = []
         for x in Xn:
@@ -188,6 +187,8 @@ if df_meteo_raw is not None and modelo_ann is not None:
         col_fecha = 'FECHA' if 'FECHA' in df_campo.columns else df_campo.columns[0]
         col_plm2 = 'PLM2' if 'PLM2' in df_campo.columns else df_campo.columns[1]
         df_campo[col_fecha] = pd.to_datetime(df_campo[col_fecha])
+        # Ordenamos cronológicamente para el cálculo por intervalos
+        df_campo = df_campo.sort_values(col_fecha).reset_index(drop=True)
         max_plm2 = df_campo[col_plm2].max()
         df_campo['Campo_Normalizado'] = df_campo[col_plm2] / max_plm2 if max_plm2 > 0 else 0
 
@@ -201,7 +202,6 @@ if df_meteo_raw is not None and modelo_ann is not None:
     df["Hydric_Factor"] = 1 / (1 + np.exp(-0.4 * (df["Prec_sum_21d"] - 15)))
     df["EMERREL"] = df["EMERREL"] * df["Hydric_Factor"]
     
-    # Restricción según el archivo original adjunto (Umbral 25 días)
     jd_thresholds = np.where(df["Prec_sum_21d"] > 50, 0, 25)
     df.loc[df["Julian_days"] <= jd_thresholds, "EMERREL"] = 0.0
 
@@ -239,17 +239,29 @@ if df_meteo_raw is not None and modelo_ann is not None:
         
     # --- MÉTRICAS DE VALIDACIÓN SOBRE DATOS REALES DE CAMPO ---
     if df_campo is not None:
-        df_cruce = pd.merge(df[['Fecha', 'EMERREL']], df_campo[[col_fecha, col_plm2, 'Campo_Normalizado']], left_on='Fecha', right_on=col_fecha, how='inner')
-        y_sim = df_cruce['EMERREL']
-        y_obs = df_cruce['Campo_Normalizado']
         
-        pearson_r = y_sim.corr(y_obs) if not y_sim.empty else 0
-        rmse = np.sqrt(np.mean((y_sim - y_obs)**2)) if not y_sim.empty else 0
+        # 1. CORRECCIÓN DE SINCRONÍA (PEARSON): Integración por intervalos de monitoreo
+        sim_intervals = []
+        # Asumimos que la cuenta empieza a acumularse desde el inicio del dataset de clima
+        last_date = df['Fecha'].min() - pd.Timedelta(days=1)
+        
+        for idx, row in df_campo.iterrows():
+            current_date = row[col_fecha]
+            # Sumamos la emergencia diaria predicha entre la última visita y la visita actual
+            mask_intervalo = (df['Fecha'] > last_date) & (df['Fecha'] <= current_date)
+            suma_simulada = df.loc[mask_intervalo, 'EMERREL'].sum()
+            sim_intervals.append(suma_simulada)
+            last_date = current_date
+            
+        df_campo['Sim_Intervalo'] = sim_intervals
+        
+        # Pearson compara lo que nació en el campo vs lo que sumó el modelo en esos mismos lapsos
+        pearson_r = df_campo[col_plm2].corr(df_campo['Sim_Intervalo'])
+        if pd.isna(pearson_r): pearson_r = 0.0
 
         pec, peak_lag, lead_time = 0, 0, 0
         
         if fecha_control:
-            fin_residualidad = fecha_control + timedelta(days=residualidad)
             malezas_totales_campo = df_campo[col_plm2].sum()
             
             # CÁLCULO DE PEC: Proporción de plantas controladas HASTA EL DÍA DE CONTROL respecto al total
@@ -284,7 +296,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
             k1.metric("Control Efectivo (PEC)", f"{pec:.1f}%", "A la fecha de aplicación", delta_color="normal")
             k2.metric("Lag (Desfase)", f"{peak_lag} días", "Vs Pico de Campo", delta_color="off")
             k3.metric("Anticipación", f"{lead_time} días", "Lead Time Logístico", delta_color="normal")
-            k4.metric("Pearson (r)", f"{pearson_r:.3f}", "Sincronía")
+            k4.metric("Pearson (r)", f"{pearson_r:.3f}", "Sincronía por Intervalos")
             st.markdown("---")
 
         col_main, col_gauge = st.columns([2, 1])
