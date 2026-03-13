@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # ===============================================================
 # 🌾 PREDWEEM INTEGRAL vK4.4 — LOLIUM LARTIGAU 2026
-# Módulo: Control por TT (°Cd) + Validación PEC Real a Campo
+# Actualización: Modelo Original (Sin Desfase) + Validación a Campo
 # ===============================================================
 
 import streamlit as st
@@ -79,7 +79,7 @@ def create_mock_files_if_missing():
 create_mock_files_if_missing()
 
 # ---------------------------------------------------------
-# 3. LÓGICA TÉCNICA (ANN + BIO)
+# 3. LÓGICA TÉCNICA (ANN ORIGINAL + BIO)
 # ---------------------------------------------------------
 def dtw_distance(a, b):
     na, nb = len(a), len(b)
@@ -107,12 +107,17 @@ class PracticalANNModel:
         return 2 * (X - self.input_min) / (self.input_max - self.input_min) - 1
 
     def predict(self, Xreal):
+        # LÓGICA EXACTA DEL MODELO ORIGINAL ADJUNTO
         Xn = self.normalize(Xreal)
-        z1 = Xn @ self.IW + self.bIW
-        a1 = np.tanh(z1)
-        z2 = (a1 @ self.LW.T).flatten() + self.bLW
-        emerrel = (np.tanh(z2) + 1) / 2
-        emer_ac = np.cumsum(emerrel)
+        emer = []
+        for x in Xn:
+            z1 = self.IW.T @ x + self.bIW
+            a1 = np.tanh(z1)
+            z2 = self.LW @ a1 + self.bLW
+            emer.append(np.tanh(z2))
+        emer = (np.array(emer).flatten() + 1) / 2
+        emer_ac = np.cumsum(emer)
+        emerrel = np.diff(emer_ac, prepend=0)
         return emerrel, emer_ac
 
 @st.cache_resource
@@ -164,7 +169,7 @@ dga_optimo = st.sidebar.number_input("TT Control Post-emergente (°Cd)", value=2
 dga_critico = st.sidebar.number_input("Límite Ventana (°Cd)", value=400, step=10)
 
 # ---------------------------------------------------------
-# 5. MOTOR DE CÁLCULO (LARTIGAU vK4.4)
+# 5. MOTOR DE CÁLCULO
 # ---------------------------------------------------------
 if df_meteo_raw is not None and modelo_ann is not None:
     
@@ -186,18 +191,18 @@ if df_meteo_raw is not None and modelo_ann is not None:
         max_plm2 = df_campo[col_plm2].max()
         df_campo['Campo_Normalizado'] = df_campo[col_plm2] / max_plm2 if max_plm2 > 0 else 0
 
-    # --- PREDICCIÓN NEURAL (LARTIGAU SHIFT +60D - Ajustable si la localidad lo requiere) ---
-    df["JD_Shifted"] = (df["Julian_days"] + 60).clip(1, 300)
-    X = df[["JD_Shifted", "TMAX", "TMIN", "Prec"]].to_numpy(float)
+    # --- PREDICCIÓN NEURAL ORIGINAL (SIN SHIFT) ---
+    X = df[["Julian_days", "TMAX", "TMIN", "Prec"]].to_numpy(float)
     emerrel_raw, _ = modelo_ann.predict(X)
     df["EMERREL"] = np.maximum(emerrel_raw, 0.0)
     
-    # --- RESTRICCIÓN HÍDRICA Y RELAJACIÓN ---
+    # --- RESTRICCIÓN HÍDRICA (LÓGICA ORIGINAL) ---
     df["Prec_sum_21d"] = df["Prec"].rolling(window=21, min_periods=1).sum()
     df["Hydric_Factor"] = 1 / (1 + np.exp(-0.4 * (df["Prec_sum_21d"] - 15)))
     df["EMERREL"] = df["EMERREL"] * df["Hydric_Factor"]
     
-    jd_thresholds = np.where(df["Prec_sum_21d"] > 50, 0, 15)
+    # Restricción según el archivo original adjunto (Umbral 25 días, no 15)
+    jd_thresholds = np.where(df["Prec_sum_21d"] > 50, 0, 25)
     df.loc[df["Julian_days"] <= jd_thresholds, "EMERREL"] = 0.0
 
     # --- BIO-TÉRMICO Y VENTANA DE CONTROL ---
@@ -224,7 +229,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
         dga_hoy = df.loc[(df["Fecha"] >= fecha_inicio_ventana) & (df["Fecha"] <= fecha_hoy), "DG"].sum()
         idx_hoy = df[df["Fecha"] == fecha_hoy].index[0]
         
-        if idx_hoy + 8 < len(df):
+        if idx_hoy + 8 <= len(df):
             dga_7dias = dga_hoy + df.iloc[idx_hoy + 1 : idx_hoy + 8]["DG"].sum()
         else:
             dga_7dias = dga_hoy
