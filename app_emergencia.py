@@ -1,14 +1,14 @@
+
 # -*- coding: utf-8 -*-
 # ===============================================================
 # 🌾 PREDWEEM INTEGRAL vK4.4 — LOLIUM TRES ARROYOS 2026
-# Actualización: Restricción Hídrica Sigmoide + Relajación Dinámica
+# Actualización: Carga Automática + Restricción Sigmoide + Relajación Dinámica
 # ===============================================================
 
 import streamlit as st
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-import pickle
 import io
 import os
 from pathlib import Path
@@ -74,11 +74,23 @@ class ANNModel:
         return (np.tanh(z2) + 1) / 2
 
 # ---------------------------------------------------------
-# 3. CARGA DE MODELO Y DATOS
+# 3. CARGA DE MODELO Y DATOS (AUTOMÁTICA / MANUAL)
 # ---------------------------------------------------------
-st.sidebar.header("Parámetros del Sistema")
-archivo_meteo = st.sidebar.file_uploader("Cargar meteo_daily.csv", type=["csv"])
+st.sidebar.header("Configuración de Datos")
 
+# Intentar carga automática
+FILE_NAME = "meteo_daily.csv"
+df = None
+
+if os.path.exists(FILE_NAME):
+    df = pd.read_csv(FILE_NAME)
+    st.sidebar.success(f"✅ Archivo '{FILE_NAME}' cargado automáticamente.")
+else:
+    archivo_subido = st.sidebar.file_uploader("O cargar archivo manualmente:", type=["csv"])
+    if archivo_subido:
+        df = pd.read_csv(archivo_subido)
+
+# Carga de Pesos
 try:
     IW = np.load('IW.npy')
     bIW = np.load('bias_IW.npy')
@@ -86,32 +98,33 @@ try:
     bLW = np.load('bias_out.npy')
     modelo_ann = ANNModel(IW, bIW, LW, bLW)
 except:
-    st.error("No se encontraron los archivos de la red neuronal (.npy)")
+    st.error("❌ No se encontraron los archivos de la red neuronal (.npy) en la carpeta raíz.")
     st.stop()
 
-if archivo_meteo:
-    df = pd.read_csv(archivo_meteo)
+# ---------------------------------------------------------
+# 4. PROCESAMIENTO Y MOTOR DE CÁLCULO
+# ---------------------------------------------------------
+if df is not None:
+    # Preparación de datos
     df['Fecha'] = pd.to_datetime(df['Fecha'])
     df = df.sort_values("Fecha").reset_index(drop=True)
     df["Julian_days"] = df["Fecha"].dt.dayofyear
     
-    # --- MOTOR DE CÁLCULO (vK4.4) ---
     # 1. Predicción Base de la Red
     X = df[["Julian_days", "TMAX", "TMIN", "Prec"]].to_numpy(float)
     df["EMERREL"] = modelo_ann.predict(X)
     
     # 2. Restricción Hídrica Sigmoide
-    # Calculamos lluvia acumulada en 21 días
     df["Prec_sum_21d"] = df["Prec"].rolling(window=21, min_periods=1).sum()
     df["Hydric_Factor"] = sigmoid_restriction(df["Prec_sum_21d"])
     df["EMERREL"] = df["EMERREL"] * df["Hydric_Factor"]
     
     # 3. Relajación Dinámica del Calendario
-    # Si la lluvia > 50mm, se anula el bloqueo de seguridad; de lo contrario, se bloquea hasta el día 25.
+    # Si la lluvia > 50mm en 21 días, permitimos emergencia temprana.
     jd_thresholds = np.where(df["Prec_sum_21d"] > 50, 0, 25)
     df.loc[df["Julian_days"] <= jd_thresholds, "EMERREL"] = 0.0
 
-    # 4. Cálculo de Tiempo Térmico (TT)
+    # 4. Tiempo Térmico (TT)
     df["Tmedia"] = (df["TMAX"] + df["TMIN"]) / 2
     df["DG"] = df["Tmedia"].apply(lambda x: calculate_tt_scalar(x, 5.0, 25.0, 35.0))
     df["TT_cum"] = df["DG"].cumsum()
@@ -125,17 +138,43 @@ if archivo_meteo:
     col2.metric("TT Acumulado", f"{df['TT_cum'].iloc[-1]:.1f} °Cd")
     col3.metric("Lluvia Total", f"{df['Prec'].sum():.1f} mm")
 
-    # Gráfico de Emergencia
+    # Gráfico
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df['Fecha'], y=df['EMERREL'], name="Tasa Diaria", line=dict(color='green', width=3)))
-    fig.add_trace(go.Bar(x=df['Fecha'], y=df['Prec']/df['Prec'].max() if df['Prec'].max() > 0 else 0, 
-                         name="Lluvia (Normalizada)", opacity=0.2, marker_color='blue'))
+    fig.add_trace(go.Scatter(
+        x=df['Fecha'], 
+        y=df['EMERREL'], 
+        name="Tasa de Emergencia", 
+        line=dict(color='#166534', width=3)
+    ))
     
-    fig.update_layout(title="Dinámica de Emergencia Relativa", xaxis_title="Fecha", yaxis_title="Tasa", template="plotly_white")
+    # Lluvia secundaria
+    fig.add_trace(go.Bar(
+        x=df['Fecha'], 
+        y=df['Prec']/df['Prec'].max() if df['Prec'].max() > 0 else 0, 
+        name="Lluvia (Normalizada)", 
+        opacity=0.2, 
+        marker_color='#3b82f6'
+    ))
+    
+    fig.update_layout(
+        title="Dinámica de Emergencia Relativa", 
+        xaxis_title="Fecha", 
+        yaxis_title="Tasa", 
+        template="plotly_white",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
     st.plotly_chart(fig, use_container_width=True)
 
-    # Botón de Descarga
+    # Exportación
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Resultados')
-    st.sidebar.download_button("Descargar Reporte Excel", data=output.getvalue(), file_name="predweem_results.xlsx")
+    st.sidebar.markdown("---")
+    st.sidebar.download_button(
+        "📥 Descargar Reporte Excel", 
+        data=output.getvalue(), 
+        file_name="predweem_results_v4_4.xlsx"
+    )
+
+else:
+    st.info("💡 Esperando datos. Coloque 'meteo_daily.csv' en la carpeta raíz o cárguelo desde la barra lateral.")
