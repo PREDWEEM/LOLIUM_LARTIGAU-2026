@@ -233,16 +233,19 @@ if df is not None and modelo_ann is not None:
     emerrel_raw, _ = modelo_ann.predict(X)
     df["EMERREL"] = np.maximum(emerrel_raw, 0.0)
     
-    # --- C. RESTRICCIÓN HÍDRICA (NUEVA LÓGICA) ---
-    # Calculamos la lluvia acumulada en una ventana de 21 días (incluyendo el actual)
-    df["Prec_sum_15d"] = df["Prec"].rolling(window=21, min_periods=1).sum()
     
-    # Condicional solicitado: Si sum(Prec) < 20mm, EMERREL se capa en 0
-    # Esto simula que sin humedad previa no hay "explosión" de emergencia masiva
-    df.loc[df["Prec_sum_15d"] < 20, "EMERREL"] = df["EMERREL"].clip(upper=0)
+    # --- C. RESTRICCIÓN HÍDRICA (LÓGICA SIGMOIDE MEJORADA) ---
+    # Calculamos la lluvia acumulada en una ventana de 21 días
+    df["Prec_sum_21d"] = df["Prec"].rolling(window=21, min_periods=1).sum()
     
-    # Restricción histórica: Anulamos emergencia antes de Marzo (Julian Day 59)
+    # Aplicamos factor de penalización suave (Sigmoide) 
+    # Centro en 15mm, pendiente 0.4 para transiciones naturales
+    df["Hydric_Factor"] = 1 / (1 + np.exp(-0.4 * (df["Prec_sum_21d"] - 15)))
+    df["EMERREL"] = df["EMERREL"] * df["Hydric_Factor"]
+    
+    # Restricción estacional (Opcional: se puede comentar para ver febrero)
     df.loc[df["Julian_days"] <= 25, "EMERREL"] = 0.0 
+ 
 
     # --- D. CÁLCULO BIO-TÉRMICO (TT) ---
     df["Tmedia"] = (df["TMAX"] + df["TMIN"]) / 2
