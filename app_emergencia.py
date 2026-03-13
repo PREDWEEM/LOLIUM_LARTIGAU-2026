@@ -274,7 +274,7 @@ if df is not None and modelo_ann is not None:
     # -----------------------------------------------------
     # VISUALIZACIÓN (TABLAS Y GRÁFICOS ORIGINALES)
     # -----------------------------------------------------
-    st.title("🌾 PREDWEEM LOLIUM- TRES ARROYOS 2026")
+    st.title("🌾 PREDWEEM LOLIUM- LARTIGAU 2026")
 
     colorscale_hard = [[0.0, "green"], [0.14, "green"], [0.15, "yellow"], [0.34, "yellow"], [0.35, "red"], [1.0, "red"]]
     fig_risk = go.Figure(data=go.Heatmap(
