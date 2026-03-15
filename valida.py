@@ -291,7 +291,7 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
 modelo_ann, cluster_model = load_models()
 
 st.sidebar.image(
-    "https://raw.githubusercontent.com/PREDWEEM/loliumTA_2026/main/logo.png",
+    "https://raw.githubusercontent.com/PREDWEEM/LOLIUM_LARTIGAU-2026/main/logo.png",
     use_container_width=True
 )
 st.sidebar.markdown("## 📂 1. Datos del Lote")
