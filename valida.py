@@ -8,6 +8,7 @@
 # - Cálculo de Desfase Global Poblacional (T50)
 # - Cálculo de Sesgo Medio de Picos (Anticipo/Atraso TPs)
 # - UI Rediseñada para agrupar métricas Globales vs Cohortes
+# - [CORRECCIÓN BUG] Filtro de obs_peak_dates solucionado
 # ===============================================================
 
 import streamlit as st
@@ -227,7 +228,6 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
     peaks_obs = peaks_obs[(peaks_obs >= 0) & (peaks_obs < len(obs_vals))]
 
     sim_peak_dates = pd.to_datetime(sim_dates[peaks_sim])
-    obs_peak_dates = pd.to_datetime(obs_dates[obs_vals_norm > 0][peaks_obs]) if len(peaks_obs) > 0 else []
     obs_peak_dates = pd.to_datetime(obs_dates[peaks_obs])
     
     # --- BEST-MATCH-FIRST ---
@@ -291,7 +291,7 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
 modelo_ann, cluster_model = load_models()
 
 st.sidebar.image(
-    "https://raw.githubusercontent.com/PREDWEEM/LOLIUM_LARTIGAU-2026/main/logo.png",
+    "https://raw.githubusercontent.com/PREDWEEM/loliumTA_2026/main/logo.png",
     use_container_width=True
 )
 st.sidebar.markdown("## 📂 1. Datos del Lote")
