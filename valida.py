@@ -4,7 +4,7 @@
 # Actualización:
 # - Pearson por intervalos de monitoreo
 # - Corrección de Detección de picos en los bordes (Padding)
-# - Emparejamiento robusto "Best-Match-First"
+# - Emparejamiento por Proximidad con Regla Anti-Cruce (Sin penalidad de índice)
 # - Filtro de Flushes Contiguos: Asigna VALOR 0 pero PERMITE MATCHING
 # - Cálculo de Desfase Global Poblacional (T50)
 # - Cálculo de Sesgo Medio de Picos (Anticipo/Atraso TPs)
@@ -201,11 +201,7 @@ def evaluate_shifted_validation(df_sim, df_campo, col_fecha, col_plm2, max_shift
 
     return best
 
-def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticipo=7, tol_retraso=2, min_dist_picos=7, umbral_min_pico=0.4):
-    """
-    Detecta pulsos mediante análisis de señales y algoritmo "Best-Match-First".
-    Asigna valor 0.0 a flushes redundantes, permitiendo que matcheen.
-    """
+def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticipo=7, tol_retraso=3, min_dist_picos=7, umbral_min_pico=0.4):
     sim_dates = df_sim['Fecha'].values
     sim_vals = df_sim['EMERREL'].values
     obs_dates = df_campo[col_fecha].values
@@ -222,7 +218,7 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
     min_h_sim = umbral_min_pico
     min_h_obs = np.max(obs_vals) * 0.1 if np.max(obs_vals) > 0 else 0.01
 
-    # Bypass SciPy: distance=1 para obligarlo a traer TODOS los picos
+    # Bypass SciPy: distance=1
     peaks_sim_padded, _ = find_peaks(sim_vals_padded, height=min_h_sim, distance=1)
     peaks_obs_padded, _ = find_peaks(obs_vals_padded, height=min_h_obs, distance=1)
     
@@ -269,22 +265,22 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
                 if idx != mejor_idx:
                     skip_indices.add(idx)
 
-    # A los picos contiguos descartados les asignamos valor 0.0
     zeroed_indices = []
     for idx in skip_indices:
         sim_vals_peaks[peaks_sim[idx]] = 0.0
         zeroed_indices.append(peaks_sim[idx])
 
-    # --- BEST-MATCH-FIRST CON PENALIDAD ---
+    # --- BEST-MATCH-FIRST POR PROXIMIDAD PURA + ANTI-CRUCE CRONOLÓGICO ---
     valid_pairs = []
     for i, sim_date in enumerate(sim_peak_dates):
         for j, obs_date in enumerate(obs_peak_dates):
             days_diff = (obs_date - sim_date).days
             if -tol_retraso <= days_diff <= tol_anticipo:
-                order_penalty = abs(i - j) * 100
-                cost = abs(days_diff) + order_penalty
+                # Ya no penalizamos el índice absoluto. El costo es la distancia pura en días.
+                cost = abs(days_diff)
                 valid_pairs.append((i, j, days_diff, cost))
                 
+    # Ordenamos de menor distancia temporal a mayor
     valid_pairs.sort(key=lambda x: x[3])
     
     tp_points = []
@@ -292,17 +288,27 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
     fn_points = []
     matched_sim = set()
     matched_obs = set()
+    matched_links = []
     offsets = []
     
     for sim_idx, obs_idx, diff, cost in valid_pairs:
         if sim_idx not in matched_sim and obs_idx not in matched_obs:
-            matched_sim.add(sim_idx)
-            matched_obs.add(obs_idx)
-            # TP se guarda con el valor asignado (puede ser 0.0 si fue neutralizado)
-            tp_points.append((sim_peak_dates[sim_idx], sim_vals_peaks[peaks_sim[sim_idx]]))
             
-            offset_val = (sim_peak_dates[sim_idx] - obs_peak_dates[obs_idx]).days
-            offsets.append(offset_val)
+            # REGLA ANTI-CRUCE: Verificar que este nuevo match no cruce cronológicamente con uno ya aceptado
+            crossing = False
+            for m_sim, m_obs in matched_links:
+                if (sim_idx > m_sim and obs_idx < m_obs) or (sim_idx < m_sim and obs_idx > m_obs):
+                    crossing = True
+                    break
+            
+            if not crossing:
+                matched_sim.add(sim_idx)
+                matched_obs.add(obs_idx)
+                matched_links.append((sim_idx, obs_idx))
+                
+                # Guardamos el acierto (Si era un pico contiguo sobrante, su valor Y será 0.0)
+                tp_points.append((sim_peak_dates[sim_idx], sim_vals_peaks[peaks_sim[sim_idx]]))
+                offsets.append(diff)
             
     # --- CÁLCULO DE FALSOS POSITIVOS (Inventos) ---
     for i in range(len(sim_peak_dates)):
@@ -386,11 +392,10 @@ col_v1, col_v2 = st.sidebar.columns(2)
 with col_v1:
     tol_anticipo = st.number_input("Anticipo (+)", value=7, step=1)
 with col_v2:
-    tol_retraso = st.number_input("Retraso (-)", value=2, step=1)
+    tol_retraso = st.number_input("Retraso (-)", value=3, step=1)  # Subido a 3 para alojar seguro el gap de 2 días
 
 col_p1, col_p2 = st.sidebar.columns(2)
 with col_p1:
-    # Set to 7 days to match the new contiguous rule by default
     min_dist_picos = st.number_input("Separación Flushes (días)", value=7, step=1)
 with col_p2:
     umbral_pico_sim = st.number_input("Umbral Mín. Pico Simulado", value=0.40, step=0.05)
