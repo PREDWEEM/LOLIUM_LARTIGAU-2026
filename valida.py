@@ -6,9 +6,9 @@
 # - Emparejamiento por Proximidad con Regla Anti-Cruce
 # - CORRECCIÓN DEFINITIVA: Eliminación total de réplicas (Ecos) del análisis.
 # - SELECCIÓN DE PICO: En flushes < 7 días, se prioriza el más cercano al dato de campo.
+# - NUEVO MATCH N-A-1: Observaciones de la "rampa de subida" pueden emparejarse al mismo pico simulado.
 # - NUEVO: TN asimétrico. Match de Campo < 0.05 con Simulación < 0.30
 # - Detección agronómica de flushes de campo (Bypass SciPy)
-# - Las estrellas TP siempre se grafican en la altura original del pico
 # - Mantenimiento de la Arquitectura ANN original de Lartigau
 # ===============================================================
 
@@ -244,7 +244,7 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
             mejor_idx = grupo_contiguos[0]
             min_distancia_global = float('inf')
 
-            # De los picos agrupados, conservamos EL MÁS CERCANO A LA REALIDAD
+            # De los picos agrupados, conservamos EL MÁS CERCANO A LA REALIDAD DE CAMPO
             for idx in grupo_contiguos:
                 if len(obs_peak_dates) > 0:
                     distancias = [abs((obs_date - sim_peak_dates[idx]).days) for obs_date in obs_peak_dates]
@@ -256,7 +256,7 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
                     min_distancia_global = dist_minima_local
                     mejor_idx = idx
 
-            # Los demás se marcan como réplicas/ecos
+            # Los demás se marcan como réplicas/ecos y se descartan
             for idx in grupo_contiguos:
                 if idx != mejor_idx:
                     skip_indices.add(idx)
@@ -269,7 +269,7 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
     # --- BEST-MATCH-FIRST POR PROXIMIDAD PURA + ANTI-CRUCE CRONOLÓGICO ---
     valid_pairs = []
     for i, sim_date in enumerate(sim_peak_dates):
-        # Si el pico es una réplica (eco), lo OMITIMOS totalmente del match
+        # OMITIMOS totalmente del match a las réplicas (ecos)
         if i in skip_indices:
             continue
             
@@ -291,7 +291,10 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
     offsets = []
     
     for sim_idx, obs_idx, diff, cost in valid_pairs:
-        if sim_idx not in matched_sim and obs_idx not in matched_obs:
+        # ¡NUEVO!: Se quitó "sim_idx not in matched_sim" de la condición de emparejamiento.
+        # Esto permite un match "N-A-1", donde varias observaciones (ej. rampa y pico) 
+        # pueden ser absorbidas y explicadas por el mismo pico simulado.
+        if obs_idx not in matched_obs:
             crossing = False
             for m_sim, m_obs in matched_links:
                 if (sim_idx > m_sim and obs_idx < m_obs) or (sim_idx < m_sim and obs_idx > m_obs):
@@ -299,14 +302,17 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
                     break
             
             if not crossing:
+                # Para el ploteo, solo añadimos la estrella TP la primera vez que hace match
+                # para no dibujar estrellas duplicadas superpuestas.
+                if sim_idx not in matched_sim:
+                    tp_points.append((sim_peak_dates[sim_idx], sim_vals[peaks_sim[sim_idx]]))
+                
                 matched_sim.add(sim_idx)
                 matched_obs.add(obs_idx)
                 matched_links.append((sim_idx, obs_idx))
-                
-                tp_points.append((sim_peak_dates[sim_idx], sim_vals[peaks_sim[sim_idx]]))
                 offsets.append(diff)
             
-    # Para los Falsos Positivos, también omitimos por completo las réplicas (skip_indices)
+    # Para los Falsos Positivos, omitimos por completo las réplicas filtradas
     for i in range(len(sim_peak_dates)):
         if i not in matched_sim and i not in skip_indices:
             if sim_peak_dates[i] <= max_obs_date:
@@ -338,7 +344,8 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
                 if sim_vals[sim_idx] < umbral_min_pico:
                     tn_points.append((pd.to_datetime(obs_date), sim_vals[sim_idx]))
             
-    tp = len(tp_points)
+    # TP se define como el número de observaciones de campo que fueron explicadas correctamente
+    tp = len(matched_obs)
     fp = len(fp_points)
     fn = len(fn_points)
     tn = len(tn_points)
