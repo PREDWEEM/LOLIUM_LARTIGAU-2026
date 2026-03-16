@@ -5,10 +5,11 @@
 # - Pearson por intervalos de monitoreo
 # - Corrección de Detección de picos en los bordes (Padding)
 # - Emparejamiento robusto "Best-Match-First"
+# - Filtro de Flushes Contiguos: Asigna VALOR 0 pero PERMITE MATCHING
 # - Cálculo de Desfase Global Poblacional (T50)
 # - Cálculo de Sesgo Medio de Picos (Anticipo/Atraso TPs)
 # - Filtro estricto para omitir picos simulados < 0.4
-# - [NUEVO] Recorte de evaluación de Falsos Positivos post-monitoreo
+# - Recorte de evaluación de Falsos Positivos post-monitoreo
 # ===============================================================
 
 import streamlit as st
@@ -200,11 +201,10 @@ def evaluate_shifted_validation(df_sim, df_campo, col_fecha, col_plm2, max_shift
 
     return best
 
-def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticipo=7, tol_retraso=2, min_dist_picos=14, umbral_min_pico=0.4):
+def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticipo=7, tol_retraso=2, min_dist_picos=7, umbral_min_pico=0.4):
     """
     Detecta pulsos mediante análisis de señales y algoritmo "Best-Match-First".
-    Retorna métricas de cohortes y el Sesgo Medio de Picos (mean_offset).
-    Solo evalúa Falsos Positivos dentro del período con datos de campo.
+    Asigna valor 0.0 a flushes redundantes, permitiendo que matcheen.
     """
     sim_dates = df_sim['Fecha'].values
     sim_vals = df_sim['EMERREL'].values
@@ -212,7 +212,7 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
     obs_vals = df_campo[col_plm2].values
     obs_vals_norm = df_campo['Campo_Normalizado'].values
     
-    # Límite máximo de evaluación (Último día de monitoreo a campo)
+    sim_vals_peaks = sim_vals.copy()
     max_obs_date = pd.to_datetime(obs_dates.max())
     
     # --- PADDING ---
@@ -222,7 +222,8 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
     min_h_sim = umbral_min_pico
     min_h_obs = np.max(obs_vals) * 0.1 if np.max(obs_vals) > 0 else 0.01
 
-    peaks_sim_padded, _ = find_peaks(sim_vals_padded, height=min_h_sim, distance=min_dist_picos)
+    # Bypass SciPy: distance=1 para obligarlo a traer TODOS los picos
+    peaks_sim_padded, _ = find_peaks(sim_vals_padded, height=min_h_sim, distance=1)
     peaks_obs_padded, _ = find_peaks(obs_vals_padded, height=min_h_obs, distance=1)
     
     peaks_sim = peaks_sim_padded - 1
@@ -234,13 +235,55 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
     sim_peak_dates = pd.to_datetime(sim_dates[peaks_sim])
     obs_peak_dates = pd.to_datetime(obs_dates[peaks_obs])
     
-    # --- BEST-MATCH-FIRST ---
+    # --- FILTRO DE PICOS SIMULADOS CONTIGUOS (ASIGNACIÓN DE VALOR 0) ---
+    ventana_contigua = min_dist_picos 
+    skip_indices = set()
+
+    for i in range(len(sim_peak_dates)):
+        if i in skip_indices:
+            continue
+
+        grupo_contiguos = [i]
+        for j in range(i + 1, len(sim_peak_dates)):
+            if (sim_peak_dates[j] - sim_peak_dates[grupo_contiguos[-1]]).days <= ventana_contigua:
+                grupo_contiguos.append(j)
+            else:
+                break
+
+        if len(grupo_contiguos) > 1:
+            mejor_idx = grupo_contiguos[0]
+            min_distancia_global = float('inf')
+
+            for idx in grupo_contiguos:
+                if len(obs_peak_dates) > 0:
+                    distancias = [abs((obs_date - sim_peak_dates[idx]).days) for obs_date in obs_peak_dates]
+                    dist_minima_local = min(distancias)
+                else:
+                    dist_minima_local = 0
+
+                if dist_minima_local < min_distancia_global:
+                    min_distancia_global = dist_minima_local
+                    mejor_idx = idx
+
+            for idx in grupo_contiguos:
+                if idx != mejor_idx:
+                    skip_indices.add(idx)
+
+    # A los picos contiguos descartados les asignamos valor 0.0
+    zeroed_indices = []
+    for idx in skip_indices:
+        sim_vals_peaks[peaks_sim[idx]] = 0.0
+        zeroed_indices.append(peaks_sim[idx])
+
+    # --- BEST-MATCH-FIRST CON PENALIDAD ---
     valid_pairs = []
     for i, sim_date in enumerate(sim_peak_dates):
         for j, obs_date in enumerate(obs_peak_dates):
             days_diff = (obs_date - sim_date).days
             if -tol_retraso <= days_diff <= tol_anticipo:
-                valid_pairs.append((i, j, days_diff, abs(days_diff)))
+                order_penalty = abs(i - j) * 100
+                cost = abs(days_diff) + order_penalty
+                valid_pairs.append((i, j, days_diff, cost))
                 
     valid_pairs.sort(key=lambda x: x[3])
     
@@ -251,22 +294,21 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
     matched_obs = set()
     offsets = []
     
-    for sim_idx, obs_idx, diff, abs_diff in valid_pairs:
+    for sim_idx, obs_idx, diff, cost in valid_pairs:
         if sim_idx not in matched_sim and obs_idx not in matched_obs:
             matched_sim.add(sim_idx)
             matched_obs.add(obs_idx)
-            tp_points.append((sim_peak_dates[sim_idx], sim_vals[peaks_sim[sim_idx]]))
+            # TP se guarda con el valor asignado (puede ser 0.0 si fue neutralizado)
+            tp_points.append((sim_peak_dates[sim_idx], sim_vals_peaks[peaks_sim[sim_idx]]))
             
-            # Offset: Sim - Obs. Negativo = Anticipo, Positivo = Atraso
             offset_val = (sim_peak_dates[sim_idx] - obs_peak_dates[obs_idx]).days
             offsets.append(offset_val)
             
     # --- CÁLCULO DE FALSOS POSITIVOS (Inventos) ---
     for i in range(len(sim_peak_dates)):
         if i not in matched_sim:
-            # Solo lo consideramos Error si ocurrió mientras seguíamos yendo al campo
             if sim_peak_dates[i] <= max_obs_date:
-                fp_points.append((sim_peak_dates[i], sim_vals[peaks_sim[i]]))
+                fp_points.append((sim_peak_dates[i], sim_vals_peaks[peaks_sim[i]]))
             
     # --- CÁLCULO DE FALSOS NEGATIVOS (Omisiones) ---
     for j in range(len(obs_peak_dates)):
@@ -290,7 +332,8 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
         "mean_offset": mean_offset,
         "tp_points": tp_points,
         "fp_points": fp_points,
-        "fn_points": fn_points
+        "fn_points": fn_points,
+        "zeroed_indices": zeroed_indices
     }
 
 # ---------------------------------------------------------
@@ -347,7 +390,8 @@ with col_v2:
 
 col_p1, col_p2 = st.sidebar.columns(2)
 with col_p1:
-    min_dist_picos = st.number_input("Separación Flushes (días)", value=14, step=1)
+    # Set to 7 days to match the new contiguous rule by default
+    min_dist_picos = st.number_input("Separación Flushes (días)", value=7, step=1)
 with col_p2:
     umbral_pico_sim = st.number_input("Umbral Mín. Pico Simulado", value=0.40, step=0.05)
 
@@ -440,7 +484,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
     best_shift_days = 0
     pec, peak_lag, lead_time = 0.0, 0, 0
     desfase_t50 = 0
-    cohort_metrics = {"f1_score": 0, "tp": 0, "fp": 0, "fn": 0, "mean_offset": 0, "tp_points": [], "fp_points": [], "fn_points": []}
+    cohort_metrics = {"f1_score": 0, "tp": 0, "fp": 0, "fn": 0, "mean_offset": 0, "tp_points": [], "fp_points": [], "fn_points": [], "zeroed_indices": []}
 
     if df_campo is not None:
         best_val = evaluate_shifted_validation(
@@ -456,6 +500,10 @@ if df_meteo_raw is not None and modelo_ann is not None:
         df_campo["Sim_Intervalo"] = best_val["sim_intervalo"]
         
         cohort_metrics = evaluate_cohort_detection(df, df_campo, col_fecha, col_plm2, tol_anticipo, tol_retraso, min_dist_picos, umbral_pico_sim)
+
+        # IMPACTO VISUAL: Si hay picos neutralizados, forzamos la caída de la curva a 0.0 en el gráfico
+        if cohort_metrics.get("zeroed_indices"):
+            df.loc[cohort_metrics["zeroed_indices"], "EMERREL"] = 0.0
 
         # CÁLCULO DE DESFASE GLOBAL (T50)
         tot_plm2 = df_campo[col_plm2].sum()
@@ -596,17 +644,35 @@ if df_meteo_raw is not None and modelo_ann is not None:
                 if cohort_metrics['tp_points']:
                     tp_x = [p[0] for p in cohort_metrics['tp_points']]
                     tp_y = [p[1] for p in cohort_metrics['tp_points']]
-                    fig_emer.add_trace(go.Scatter(x=tp_x, y=tp_y, mode='markers', name='✅ TP (Detectado)', marker=dict(color='#10b981', size=14, symbol='star', line=dict(width=1, color='DarkSlateGrey'))))
+                    fig_emer.add_trace(go.Scatter(
+                        x=tp_x, 
+                        y=tp_y, 
+                        mode='markers', 
+                        name='✅ TP (Detectado)', 
+                        marker=dict(color='#10b981', size=14, symbol='star', line=dict(width=1, color='DarkSlateGrey'))
+                    ))
                 
                 if cohort_metrics['fp_points']:
                     fp_x = [p[0] for p in cohort_metrics['fp_points']]
                     fp_y = [p[1] for p in cohort_metrics['fp_points']]
-                    fig_emer.add_trace(go.Scatter(x=fp_x, y=fp_y, mode='markers', name='❌ FP (Inventado)', marker=dict(color='#ef4444', size=12, symbol='x', line=dict(width=2, color='DarkRed'))))
+                    fig_emer.add_trace(go.Scatter(
+                        x=fp_x, 
+                        y=fp_y, 
+                        mode='markers', 
+                        name='❌ FP (Inventado)', 
+                        marker=dict(color='#ef4444', size=12, symbol='x', line=dict(width=2, color='DarkRed'))
+                    ))
                 
                 if cohort_metrics['fn_points']:
                     fn_x = [p[0] for p in cohort_metrics['fn_points']]
                     fn_y = [p[1] for p in cohort_metrics['fn_points']]
-                    fig_emer.add_trace(go.Scatter(x=fn_x, y=fn_y, mode='markers', name='⚠️ FN (Omitido)', marker=dict(color='#f97316', size=12, symbol='triangle-up', line=dict(width=1, color='Black'))))
+                    fig_emer.add_trace(go.Scatter(
+                        x=fn_x, 
+                        y=fn_y, 
+                        mode='markers', 
+                        name='⚠️ FN (Omitido)', 
+                        marker=dict(color='#f97316', size=12, symbol='triangle-up', line=dict(width=1, color='Black'))
+                    ))
 
             if fecha_control:
                 fig_emer.add_vline(
