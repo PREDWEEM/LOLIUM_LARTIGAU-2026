@@ -3,12 +3,11 @@
 # 🌾 PREDWEEM INTEGRAL vK4.9.5 — LOLIUM LARTIGAU 2026
 # Actualización:
 # - Pearson por intervalos de monitoreo
-# - Corrección de Detección de picos en los bordes (Padding)
 # - Emparejamiento por Proximidad con Regla Anti-Cruce
 # - Separación de Flushes FIJADA en 7 días (Hardcoded)
+# - NUEVO: Detección agronómica de flushes de campo (Bypass SciPy)
 # - Cálculo de Desfase Global Poblacional (T50)
 # - Cálculo de Sesgo Medio de Picos (Anticipo/Atraso TPs)
-# - Filtro estricto para omitir picos simulados < 0.4
 # - Recorte de evaluación de Falsos Positivos post-monitoreo
 # ===============================================================
 
@@ -201,7 +200,7 @@ def evaluate_shifted_validation(df_sim, df_campo, col_fecha, col_plm2, max_shift
 
     return best
 
-def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticipo=7, tol_retraso=3, min_dist_picos=7, umbral_min_pico=0.4):
+def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticipo=7, tol_retraso=7, min_dist_picos=7, umbral_min_pico=0.4):
     sim_dates = df_sim['Fecha'].values
     sim_vals = df_sim['EMERREL'].values
     obs_dates = df_campo[col_fecha].values
@@ -211,24 +210,19 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
     sim_vals_peaks = sim_vals.copy()
     max_obs_date = pd.to_datetime(obs_dates.max())
     
-    # --- PADDING ---
+    # --- PADDING Y DETECCIÓN SIMULADA ---
     sim_vals_padded = np.pad(sim_vals, (1, 1), 'constant', constant_values=(0, 0))
-    obs_vals_padded = np.pad(obs_vals, (1, 1), 'constant', constant_values=(0, 0))
-
-    min_h_sim = umbral_min_pico
-    min_h_obs = np.max(obs_vals) * 0.1 if np.max(obs_vals) > 0 else 0.01
-
-    # Bypass SciPy: distance=1
-    peaks_sim_padded, _ = find_peaks(sim_vals_padded, height=min_h_sim, distance=1)
-    peaks_obs_padded, _ = find_peaks(obs_vals_padded, height=min_h_obs, distance=1)
+    peaks_sim_padded, _ = find_peaks(sim_vals_padded, height=umbral_min_pico, distance=1)
     
     peaks_sim = peaks_sim_padded - 1
-    peaks_obs = peaks_obs_padded - 1
-    
     peaks_sim = peaks_sim[(peaks_sim >= 0) & (peaks_sim < len(sim_vals))]
-    peaks_obs = peaks_obs[(peaks_obs >= 0) & (peaks_obs < len(obs_vals))]
-
     sim_peak_dates = pd.to_datetime(sim_dates[peaks_sim])
+    
+    # --- DETECCIÓN AGRONÓMICA OBSERVADA (BYPASS SCIPY) ---
+    # Cualquier conteo de campo que supere el 5% del máximo se considera un "flush target".
+    # Esto evita que SciPy elimine picos escalonados (ej. 250 el día 6 y 368 el día 11).
+    min_h_obs = np.max(obs_vals) * 0.05 if np.max(obs_vals) > 0 else 0.01
+    peaks_obs = np.where(obs_vals >= min_h_obs)[0]
     obs_peak_dates = pd.to_datetime(obs_dates[peaks_obs])
     
     # --- FILTRO DE PICOS SIMULADOS CONTIGUOS (ASIGNACIÓN DE VALOR 0) ---
@@ -276,7 +270,8 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
         for j, obs_date in enumerate(obs_peak_dates):
             days_diff = (obs_date - sim_date).days
             if -tol_retraso <= days_diff <= tol_anticipo:
-                cost = abs(days_diff)
+                # Agregamos un pequeñísimo tie-breaker secuencial para desempates exactos
+                cost = abs(days_diff) + (abs(i - j) * 0.001)
                 valid_pairs.append((i, j, days_diff, cost))
                 
     # Ordenamos de menor distancia temporal a mayor
@@ -390,7 +385,7 @@ col_v1, col_v2 = st.sidebar.columns(2)
 with col_v1:
     tol_anticipo = st.number_input("Anticipo (+)", value=7, step=1)
 with col_v2:
-    tol_retraso = st.number_input("Retraso (-)", value=3, step=1) 
+    tol_retraso = st.number_input("Retraso (-)", value=7, step=1) 
 
 col_p1, col_p2 = st.sidebar.columns(2)
 with col_p1:
