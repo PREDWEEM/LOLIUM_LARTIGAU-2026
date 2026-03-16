@@ -4,8 +4,8 @@
 # Actualización:
 # - Pearson por intervalos de monitoreo
 # - Corrección de Detección de picos en los bordes (Padding)
-# - Emparejamiento por Proximidad con Regla Anti-Cruce (Sin penalidad de índice)
-# - Filtro de Flushes Contiguos: Asigna VALOR 0 pero PERMITE MATCHING
+# - Emparejamiento por Proximidad con Regla Anti-Cruce
+# - Separación de Flushes FIJADA en 7 días (Hardcoded)
 # - Cálculo de Desfase Global Poblacional (T50)
 # - Cálculo de Sesgo Medio de Picos (Anticipo/Atraso TPs)
 # - Filtro estricto para omitir picos simulados < 0.4
@@ -276,7 +276,6 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
         for j, obs_date in enumerate(obs_peak_dates):
             days_diff = (obs_date - sim_date).days
             if -tol_retraso <= days_diff <= tol_anticipo:
-                # Ya no penalizamos el índice absoluto. El costo es la distancia pura en días.
                 cost = abs(days_diff)
                 valid_pairs.append((i, j, days_diff, cost))
                 
@@ -294,7 +293,7 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
     for sim_idx, obs_idx, diff, cost in valid_pairs:
         if sim_idx not in matched_sim and obs_idx not in matched_obs:
             
-            # REGLA ANTI-CRUCE: Verificar que este nuevo match no cruce cronológicamente con uno ya aceptado
+            # REGLA ANTI-CRUCE
             crossing = False
             for m_sim, m_obs in matched_links:
                 if (sim_idx > m_sim and obs_idx < m_obs) or (sim_idx < m_sim and obs_idx > m_obs):
@@ -306,7 +305,6 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
                 matched_obs.add(obs_idx)
                 matched_links.append((sim_idx, obs_idx))
                 
-                # Guardamos el acierto (Si era un pico contiguo sobrante, su valor Y será 0.0)
                 tp_points.append((sim_peak_dates[sim_idx], sim_vals_peaks[peaks_sim[sim_idx]]))
                 offsets.append(diff)
             
@@ -392,11 +390,12 @@ col_v1, col_v2 = st.sidebar.columns(2)
 with col_v1:
     tol_anticipo = st.number_input("Anticipo (+)", value=7, step=1)
 with col_v2:
-    tol_retraso = st.number_input("Retraso (-)", value=3, step=1)  # Subido a 3 para alojar seguro el gap de 2 días
+    tol_retraso = st.number_input("Retraso (-)", value=3, step=1) 
 
 col_p1, col_p2 = st.sidebar.columns(2)
 with col_p1:
-    min_dist_picos = st.number_input("Separación Flushes (días)", value=7, step=1)
+    # Parámetro fijado y deshabilitado para garantizar la regla de los 7 días
+    min_dist_picos = st.number_input("Separación Flushes (días)", value=7, disabled=True)
 with col_p2:
     umbral_pico_sim = st.number_input("Umbral Mín. Pico Simulado", value=0.40, step=0.05)
 
