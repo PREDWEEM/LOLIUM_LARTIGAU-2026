@@ -505,7 +505,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
     mask_forzado = (df["Prec"] >= 20.0) & (df["Fecha"].dt.month != 1)
     df.loc[mask_forzado, "EMERREL"] = 1.0
 
-       df["Tmedia"] = (df["TMAX"] + df["TMIN"]) / 2
+    df["Tmedia"] = (df["TMAX"] + df["TMIN"]) / 2
     df["DG"] = df["Tmedia"].apply(lambda x: calculate_tt_scalar(x, t_base_val, t_opt_max, t_critica))
 
     fecha_hoy = pd.Timestamp.now().normalize()
