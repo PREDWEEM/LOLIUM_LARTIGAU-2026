@@ -10,6 +10,7 @@
 # - NUEVO: TN asimétrico. Match de Campo < 0.05 con Simulación < 0.30
 # - Detección agronómica de flushes de campo (Bypass SciPy)
 # - Mantenimiento de la Arquitectura ANN original de Lartigau
+# - NUEVO: Forzado de pico (EMERREL = 1.0) frente a lluvias >= 20 mm
 # ===============================================================
 
 import streamlit as st
@@ -291,7 +292,6 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
     offsets = []
     
     for sim_idx, obs_idx, diff, cost in valid_pairs:
-        # ¡NUEVO!: Se quitó "sim_idx not in matched_sim" de la condición de emparejamiento.
         # Esto permite un match "N-A-1", donde varias observaciones (ej. rampa y pico) 
         # pueden ser absorbidas y explicadas por el mismo pico simulado.
         if obs_idx not in matched_obs:
@@ -470,6 +470,9 @@ if df_meteo_raw is not None and modelo_ann is not None:
 
     # RESTRICCIÓN LARTIGAU
     df.loc[(df["Julian_days"] <= 25) & (df["Prec_sum_21d"] <= 50), "EMERREL"] = 0.0
+
+    # 🌧️ NUEVA REGLA: Forzar pico de 1.0 frente a eventos puntuales de lluvia >= 20 mm
+    df.loc[df["Prec"] >= 20.0, "EMERREL"] = 1.0
 
     df["Tmedia"] = (df["TMAX"] + df["TMIN"]) / 2
     df["DG"] = df["Tmedia"].apply(lambda x: calculate_tt_scalar(x, t_base_val, t_opt_max, t_critica))
