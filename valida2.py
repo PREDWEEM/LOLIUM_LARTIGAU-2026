@@ -1,15 +1,20 @@
 # -*- coding: utf-8 -*-
 # ===============================================================
-# 🌾 PREDWEEM INTEGRAL vK4.9.6 — LOLIUM LARTIGAU 2026
+# 🌾 PREDWEEM INTEGRAL vK4.9.8 — LOLIUM TRES ARROYOS 2026
 # Actualización:
-# - UNIFICACIÓN MECANÍSTICA 100%: Se elimina el forzado empírico de 20 mm y la sigmoide de 21 días.
-# - Pearson por intervalos de monitoreo y Emparejamiento por Proximidad (Regla Anti-Cruce).
-# - Eliminación total de réplicas (Ecos) en cadena y aplanamiento visual.
-# - Detección agronómica de flushes de campo (Bypass SciPy).
-# - Módulo Mecanístico de Balance Hídrico Superficial (BHS) activo.
-# - Evapotranspiración (ET0) mediante Hargreaves-Samani (Latitud Lartigau: -38.25).
-# - Selector dinámico de manejo de lote (Rastrojo/Labranza) para coeficiente Ke.
-# - Visualización dinámica de la retención de agua en suelo vs Lluvias.
+# - Pearson por intervalos de monitoreo
+# - Emparejamiento por Proximidad con Regla Anti-Cruce
+# - CORRECCIÓN DEFINITIVA: Eliminación total de réplicas (Ecos) en cadena.
+# - SELECCIÓN DE PICO: Se prioriza el más cercano al dato de campo (y de mayor EMERREL en empate).
+# - APLANAMIENTO DE ECOS: Eliminación visual completa de la montaña del eco falso.
+# - NUEVO MATCH N-A-1: Observaciones de la "rampa de subida" pueden emparejarse al mismo pico simulado.
+# - NUEVO: TN asimétrico. Match de Campo < 0.05 con Simulación < 0.30
+# - Detección agronómica de flushes de campo (Bypass SciPy)
+# - Mantenimiento de la Arquitectura ANN específica de Tres Arroyos
+# - NUEVO: Módulo Mecanístico de Balance Hídrico Superficial (Sustituye ventana 21d)
+# - ACTUALIZACIÓN: Se elimina el forzado empírico de picos por lluvias > 20 mm para confiar 100% en el BHS.
+# - NUEVO: Visualización dinámica de la "caja" de agua (W_superficial) vs Precipitaciones.
+# - NUEVO: Menú cualitativo de Manejo del Lote (Incluye "Cobertura Muy Densa" Ke=0.15).
 # ===============================================================
 
 import streamlit as st
@@ -26,7 +31,7 @@ from scipy.signal import find_peaks
 # 1. CONFIGURACIÓN DE PÁGINA Y ESTILO
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="PREDWEEM LARTIGAU vK4.9.6",
+    page_title="PREDWEEM TRES ARROYOS vK4.9.8",
     layout="wide",
     page_icon="🌾"
 )
@@ -114,8 +119,7 @@ def calculate_tt_scalar(t, t_base, t_opt, t_crit):
     else:
         return 0.0
 
-def calcular_et0_hargreaves(jday, tmax, tmin, latitud=-38.25):
-    # Latitud ajustada para Lartigau
+def calcular_et0_hargreaves(jday, tmax, tmin, latitud=-38.37):
     lat_rad = np.radians(latitud)
     dr = 1 + 0.033 * np.cos(2 * np.pi / 365 * jday)
     dec = 0.409 * np.sin(2 * np.pi / 365 * jday - 1.39)
@@ -415,15 +419,13 @@ st.sidebar.image(
     use_container_width=True
 )
 st.sidebar.markdown("## 📂 1. Datos del Lote")
-archivo_meteo = st.sidebar.file_uploader("1. Clima (Lartigau)", type=["xlsx", "csv"])
-archivo_campo = st.sidebar.file_uploader("2. Campo (Validación Lartigau)", type=["xlsx", "csv"])
-
-df_meteo_raw = load_data(archivo_meteo, "LARTIGAU")
-df_campo_raw = load_data(archivo_campo, "LARTIGAU_campo")
+archivo_meteo = st.sidebar.file_uploader("1. Clima (TRES ARROYOS)", type=["xlsx", "csv"])
+archivo_campo = st.sidebar.file_uploader("2. Campo (Validación TRES ARROYOS)", type=["xlsx", "csv"])
 
 st.sidebar.divider()
 st.sidebar.markdown("## ⚙️ 2. Fisiología y Logística")
 umbral_er = st.sidebar.slider("Umbral Alerta Temprana", 0.05, 0.80, 0.30)
+residualidad = st.sidebar.number_input("Residualidad Herbicida (días)", 0, 60, 20)
 
 col_t1, col_t2 = st.sidebar.columns(2)
 with col_t1:
@@ -464,13 +466,13 @@ with col_p2:
 
 st.sidebar.divider()
 st.sidebar.markdown("## 💧 4. Balance Hídrico (Suelo)")
-w_max_val = st.sidebar.number_input("Cap. de Campo Superficial (mm)", value=10.0, step=1.0)
+w_max_val = st.sidebar.number_input("Cap. de Campo Superficial (mm)", value=35.0, step=1.0)
 
 st.sidebar.markdown("**Manejo del Lote (Cobertura)**")
 tipo_manejo = st.sidebar.selectbox(
     "Nivel de Rastrojo",
     options=[
-        "Cobertura Muy Densa (SD - Extra Rastrojo/CS)",
+        "Cobertura Muy Densa (SD - Extra Rastrojo/Cultivos de Servicio)",
         "Alta Cobertura (SD - Rastrojo Trigo/Maíz)",
         "Cobertura Media (SD - Rastrojo Soja)",
         "Baja Cobertura / Labranza Convencional"
@@ -488,6 +490,9 @@ else:
     ke_val = 0.40
 
 st.sidebar.caption(f"Coeficiente Ke interno aplicado: **{ke_val:.2f}**")
+
+df_meteo_raw = load_data(archivo_meteo, "TRES_ARROYOS")
+df_campo_raw = load_data(archivo_campo, "TRES_ARROYOS_campo")
 
 # ---------------------------------------------------------
 # 5. MOTOR DE CÁLCULO
@@ -528,15 +533,19 @@ if df_meteo_raw is not None and modelo_ann is not None:
     df["EMERREL"] = np.maximum(emerrel_raw, 0.0)
 
     # ---------------------------------------------------------
-    # MÓDULO HÍDRICO SUPERFICIAL (BHS UNIFICADO)
+    # MÓDULO HÍDRICO SUPERFICIAL
     # ---------------------------------------------------------
-    df["ET0"] = calcular_et0_hargreaves(df["Julian_days"].values, df["TMAX"].values, df["TMIN"].values, latitud=-38.25)
+    df["ET0"] = calcular_et0_hargreaves(df["Julian_days"].values, df["TMAX"].values, df["TMIN"].values, latitud=-38.37)
     df["W_superficial"] = balance_hidrico_superficial(df["Prec"].values, df["ET0"].values, w_max=w_max_val, ke_suelo=ke_val)
     
     humedad_relativa = df["W_superficial"] / w_max_val
     df["Hydric_Factor"] = 1 / (1 + np.exp(-10 * (humedad_relativa - 0.3)))
     
     df["EMERREL"] = df["EMERREL"] * df["Hydric_Factor"]
+
+    # Mantenemos la suma acumulada solo para la restricción histórica específica de enero
+    df["Prec_sum_21d"] = df["Prec"].rolling(window=21, min_periods=1).sum()
+    df.loc[(df["Julian_days"] <= 25) & (df["Prec_sum_21d"] <= 50), "EMERREL"] = 0.0
 
     df["Tmedia"] = (df["TMAX"] + df["TMIN"]) / 2
     df["DG"] = df["Tmedia"].apply(lambda x: calculate_tt_scalar(x, t_base_val, t_opt_max, t_critica))
@@ -618,9 +627,9 @@ if df_meteo_raw is not None and modelo_ann is not None:
     # -----------------------------------------------------
     # VISUALIZACIÓN FRONT-END
     # -----------------------------------------------------
-    st.title("🌾 PREDWEEM LOLIUM - LARTIGAU 2026")
+    st.title("🌾 PREDWEEM LOLIUM - TRES ARROYOS 2026")
 
-    colorscale_hard = [[0.0, "green"], [0.39, "green"], [0.40, "red"], [1.0, "red"]]
+    colorscale_hard = [[0.0, "green"], [0.14, "green"], [0.15, "yellow"], [0.34, "yellow"], [0.35, "red"], [1.0, "red"]]
 
     fig_risk = go.Figure(data=go.Heatmap(z=[df["EMERREL"].values], x=df["Fecha"], y=["Emergencia"], colorscale=colorscale_hard, zmin=0, zmax=1, showscale=False))
     fig_risk.update_layout(height=120, margin=dict(t=30, b=0, l=10, r=10), title="Mapa de Riesgo (Tasa Diaria)")
@@ -687,7 +696,15 @@ if df_meteo_raw is not None and modelo_ann is not None:
                     fn_y = [p[1] for p in cohort_metrics['fn_points']]
                     fig_emer.add_trace(go.Scatter(x=fn_x, y=fn_y, mode='markers', name='⚠️ FN (Omitido)', marker=dict(color='#f97316', size=12, symbol='triangle-up', line=dict(width=1, color='Black'))))
 
-           if fecha_inicio_ventana:
+            if fecha_control:
+                fig_emer.add_vline(x=fecha_control.timestamp() * 1000, line_dash="dot", line_color="red", line_width=3, annotation_text=f"Control ({dga_optimo}°Cd)", annotation_position="top left", annotation_font=dict(color="red", size=12))
+                fin_res = fecha_control + timedelta(days=residualidad)
+                fig_emer.add_vrect(x0=fecha_control.timestamp() * 1000, x1=fin_res.timestamp() * 1000, fillcolor="blue", opacity=0.1, layer="below", line_width=0, annotation_text=f"Protección ({residualidad}d)", annotation_position="top left")
+
+            fig_emer.update_layout(title="Dinámica de Emergencia y Momento Crítico", height=450, hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+            st.plotly_chart(fig_emer, use_container_width=True)
+
+            if fecha_inicio_ventana:
                 st.success(f"📅 **Inicio de Conteo Térmico:** {fecha_inicio_ventana.strftime('%d-%m-%Y')} (Primer pico detectado)")
                 if fecha_control:
                     st.error(f"🎯 **MOMENTO CRÍTICO DE CONTROL:** {fecha_control.strftime('%d-%m-%Y')}. Se acumularon **{dga_optimo} °Cd** post-emergencia.")
@@ -710,16 +727,44 @@ if df_meteo_raw is not None and modelo_ann is not None:
         
         fig_hidrico = go.Figure()
         
-        fig_hidrico.add_trace(go.Bar(x=df["Fecha"], y=df["Prec"], name='Lluvia Diaria (mm)', marker_color='#93c5fd', opacity=0.7))
-        fig_hidrico.add_trace(go.Scatter(x=df["Fecha"], y=df["W_superficial"], name='Agua en Suelo (0-10cm)', mode='lines', line=dict(color='#0284c7', width=3), fill='tozeroy', fillcolor='rgba(2, 132, 199, 0.2)'))
+        fig_hidrico.add_trace(go.Bar(
+            x=df["Fecha"], 
+            y=df["Prec"], 
+            name='Lluvia Diaria (mm)', 
+            marker_color='#93c5fd', 
+            opacity=0.7
+        ))
+        
+        fig_hidrico.add_trace(go.Scatter(
+            x=df["Fecha"], 
+            y=df["W_superficial"], 
+            name='Agua en Suelo (0-10cm)', 
+            mode='lines',
+            line=dict(color='#0284c7', width=3),
+            fill='tozeroy',
+            fillcolor='rgba(2, 132, 199, 0.2)'
+        ))
 
-        fig_hidrico.add_hline(y=w_max_val, line_dash="dot", line_color="#334155", annotation_text=f"Capacidad Máx. ({w_max_val} mm)", annotation_position="top left")
+        fig_hidrico.add_hline(
+            y=w_max_val, 
+            line_dash="dot", 
+            line_color="#334155", 
+            annotation_text=f"Capacidad Máx. ({w_max_val} mm)", 
+            annotation_position="top left"
+        )
 
-        fig_hidrico.update_layout(title="Precipitación vs. Retención Real de Humedad", xaxis_title="Fecha", yaxis_title="Milímetros (mm)", height=450, hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+        fig_hidrico.update_layout(
+            title="Precipitación vs. Retención Real de Humedad", 
+            xaxis_title="Fecha", 
+            yaxis_title="Milímetros (mm)", 
+            height=450,
+            hovermode="x unified",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
         st.plotly_chart(fig_hidrico, use_container_width=True)
 
     with tab3:
-        st.header("🔍 Clasificación DTW (Lartigau)")
+        st.header("🔍 Clasificación DTW (Tres Arroyos)")
         fecha_corte = pd.Timestamp("2026-05-01")
         df_obs = df[df["Fecha"] < fecha_corte].copy()
 
@@ -777,7 +822,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
             }
             pd.DataFrame(resumen_val).to_excel(writer, sheet_name='Validacion_Campo', index=False)
 
-    st.sidebar.download_button("📥 Descargar Reporte Completo", output.getvalue(), "PREDWEEM_Integral_Lartigau_vK4_9_6_BHS.xlsx")
+    st.sidebar.download_button("📥 Descargar Reporte Completo", output.getvalue(), "PREDWEEM_Integral_TresArroyos_vK4_9_8.xlsx")
 
 else:
     st.info("👋 Bienvenido a PREDWEEM. Cargue datos climáticos para comenzar.")
