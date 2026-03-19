@@ -1,23 +1,15 @@
-
 # -*- coding: utf-8 -*-
 # ===============================================================
-# 🌾 PREDWEEM INTEGRAL vK4.9.5 — LOLIUM LARTIGAU 2026
+# 🌾 PREDWEEM INTEGRAL vK4.9.6 — LOLIUM LARTIGAU 2026
 # Actualización:
-# - Pearson por intervalos de monitoreo
-# - Emparejamiento por Proximidad con Regla Anti-Cruce
-# - CORRECCIÓN DEFINITIVA: Eliminación total de réplicas (Ecos) en cadena.
-# - SELECCIÓN DE PICO: Se prioriza el más cercano al dato de campo (y de mayor EMERREL en empate).
-# - APLANAMIENTO DE ECOS: Eliminación visual completa de la montaña del eco falso.
-# - NUEVO MATCH N-A-1: Observaciones de la "rampa de subida" pueden emparejarse al mismo pico simulado.
-# - NUEVO: TN asimétrico. Match de Campo < 0.05 con Simulación < 0.30
-# - Detección agronómica de flushes de campo (Bypass SciPy)
-# - Mantenimiento de la Arquitectura ANN original de Lartigau
-# - NUEVO: Módulo Mecanístico de Balance Hídrico Superficial (Sustituye ventana 21d)
-# - NUEVO: Evapotranspiración (ET0) mediante Hargreaves-Samani (Lat ajustada a Lartigau: -38.25)
-# - NUEVO: Selector de manejo de lote (Rastrojo/Labranza) para Ke
-# - NUEVO: Gráfico dinámico de retención de agua en suelo vs Lluvias
-# - ACTUALIZACIÓN: Se elimina el forzado empírico de picos por lluvias > 20 mm para confiar 100% en el BHS.
-# - NUEVO: Menú de Separación de Flushes activado dinámicamente
+# - UNIFICACIÓN MECANÍSTICA 100%: Se elimina el forzado empírico de 20 mm y la sigmoide de 21 días.
+# - Pearson por intervalos de monitoreo y Emparejamiento por Proximidad (Regla Anti-Cruce).
+# - Eliminación total de réplicas (Ecos) en cadena y aplanamiento visual.
+# - Detección agronómica de flushes de campo (Bypass SciPy).
+# - Módulo Mecanístico de Balance Hídrico Superficial (BHS) activo.
+# - Evapotranspiración (ET0) mediante Hargreaves-Samani (Latitud Lartigau: -38.25).
+# - Selector dinámico de manejo de lote (Rastrojo/Labranza) para coeficiente Ke.
+# - Visualización dinámica de la retención de agua en suelo vs Lluvias.
 # ===============================================================
 
 import streamlit as st
@@ -34,7 +26,7 @@ from scipy.signal import find_peaks
 # 1. CONFIGURACIÓN DE PÁGINA Y ESTILO
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="PREDWEEM LARTIGAU vK4.9.5",
+    page_title="PREDWEEM LARTIGAU vK4.9.6",
     layout="wide",
     page_icon="🌾"
 )
@@ -123,7 +115,7 @@ def calculate_tt_scalar(t, t_base, t_opt, t_crit):
         return 0.0
 
 def calcular_et0_hargreaves(jday, tmax, tmin, latitud=-38.25):
-    # Latitud por defecto centrada en Lartigau (-38.25 aprox)
+    # Latitud ajustada para Lartigau
     lat_rad = np.radians(latitud)
     dr = 1 + 0.033 * np.cos(2 * np.pi / 365 * jday)
     dec = 0.409 * np.sin(2 * np.pi / 365 * jday - 1.39)
@@ -537,7 +529,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
     df["EMERREL"] = np.maximum(emerrel_raw, 0.0)
 
     # ---------------------------------------------------------
-    # MÓDULO HÍDRICO SUPERFICIAL
+    # MÓDULO HÍDRICO SUPERFICIAL (BHS UNIFICADO)
     # ---------------------------------------------------------
     df["ET0"] = calcular_et0_hargreaves(df["Julian_days"].values, df["TMAX"].values, df["TMIN"].values, latitud=-38.25)
     df["W_superficial"] = balance_hidrico_superficial(df["Prec"].values, df["ET0"].values, w_max=w_max_val, ke_suelo=ke_val)
@@ -547,7 +539,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
     
     df["EMERREL"] = df["EMERREL"] * df["Hydric_Factor"]
 
-    # RESTRICCIÓN LARTIGAU
+    # Mantenemos la suma de 21 días SOLO para la restricción agronómica histórica de Enero
     df["Prec_sum_21d"] = df["Prec"].rolling(window=21, min_periods=1).sum()
     df.loc[(df["Julian_days"] <= 25) & (df["Prec_sum_21d"] <= 50), "EMERREL"] = 0.0
 
@@ -598,7 +590,6 @@ if df_meteo_raw is not None and modelo_ann is not None:
         
         cohort_metrics = evaluate_cohort_detection(df, df_campo, col_fecha, col_plm2, tol_anticipo, tol_retraso, min_dist_picos, umbral_pico_sim)
 
-        # ELIMINACIÓN VISUAL: Borramos toda la montaña del pico falso de la gráfica principal
         if cohort_metrics.get("zeroed_indices"):
             df.loc[cohort_metrics["zeroed_indices"], "EMERREL"] = 0.0
 
@@ -799,7 +790,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
             }
             pd.DataFrame(resumen_val).to_excel(writer, sheet_name='Validacion_Campo', index=False)
 
-    st.sidebar.download_button("📥 Descargar Reporte Completo", output.getvalue(), "PREDWEEM_Integral_Lartigau_vK4_9_5.xlsx")
+    st.sidebar.download_button("📥 Descargar Reporte Completo", output.getvalue(), "PREDWEEM_Integral_Lartigau_vK4_9_6_BHS.xlsx")
 
 else:
     st.info("👋 Bienvenido a PREDWEEM. Cargue datos climáticos para comenzar.")
