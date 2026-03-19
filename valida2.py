@@ -539,10 +539,6 @@ if df_meteo_raw is not None and modelo_ann is not None:
     
     df["EMERREL"] = df["EMERREL"] * df["Hydric_Factor"]
 
-    # Mantenemos la suma de 21 días SOLO para la restricción agronómica histórica de Enero
-    df["Prec_sum_21d"] = df["Prec"].rolling(window=21, min_periods=1).sum()
-    df.loc[(df["Julian_days"] <= 25) & (df["Prec_sum_21d"] <= 50), "EMERREL"] = 0.0
-
     df["Tmedia"] = (df["TMAX"] + df["TMIN"]) / 2
     df["DG"] = df["Tmedia"].apply(lambda x: calculate_tt_scalar(x, t_base_val, t_opt_max, t_critica))
 
