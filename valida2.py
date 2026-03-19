@@ -415,7 +415,7 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
 modelo_ann, cluster_model = load_models()
 
 st.sidebar.image(
-    "https://raw.githubusercontent.com/PREDWEEM/LOLIUM_LASTIGAU-2026/main/logo.png",
+    "https://raw.githubusercontent.com/PREDWEEM/LOLIUM_LARTIGAU-2026/main/logo.png",
     use_container_width=True
 )
 st.sidebar.markdown("## 📂 1. Datos del Lote")
@@ -623,7 +623,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
     # -----------------------------------------------------
     # VISUALIZACIÓN FRONT-END
     # -----------------------------------------------------
-    st.title("🌾 PREDWEEM LOLIUM - TRES ARROYOS 2026")
+    st.title("🌾 PREDWEEM LOLIUM - LARTIGAU 2026")
 
     colorscale_hard = [[0.0, "green"], [0.39, "green"], [0.40, "red"], [1.0, "red"]]
 
