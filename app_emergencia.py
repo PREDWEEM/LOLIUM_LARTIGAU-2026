@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 # ===============================================================
-# 🌾 PREDWEEM INTEGRAL vK4.5 — LOLIUM LARTIGAU 2026
-# Actualización desde vK4.4:
-# - ELIMINADO: Restricción empírica de 21 días y forzado de 20mm.
-# - NUEVO: Módulo Mecanístico de Balance Hídrico Superficial (BHS)
-# - NUEVO: Evapotranspiración (ET0) mediante Hargreaves-Samani (Lat ajustada a Lartigau)
-# - NUEVO: Selector de manejo de lote (Rastrojo/Labranza) para Ke
-# - NUEVO: Gráfico dinámico de retención de agua en suelo vs Lluvias
+# 🌾 PREDWEEM INTEGRAL vK4.6 — LOLIUM LARTIGAU 2026
+# Actualización:
+# - UNIFICACIÓN MECANÍSTICA 100%: 
+#   * Eliminado el forzado empírico de 20 mm.
+#   * Eliminada la restricción histórica de 21 días / 50 mm para enero.
+# - Módulo Mecanístico de Balance Hídrico Superficial (BHS) puro.
+# - Evapotranspiración (ET0) mediante Hargreaves-Samani (Lat ajustada a Lartigau: -38.25)
+# - Selector de manejo de lote (Rastrojo/Labranza) para Ke
+# - Gráfico dinámico de retención de agua en suelo vs Lluvias
 # ===============================================================
 
 import streamlit as st
@@ -21,7 +23,7 @@ from pathlib import Path
 # 1. CONFIGURACIÓN DE PÁGINA Y ESTILO
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="PREDWEEM LARTIGAU vK4.5", 
+    page_title="PREDWEEM LARTIGAU vK4.6", 
     layout="wide",
     page_icon="🌾"
 )
@@ -120,7 +122,7 @@ def calculate_tt_scalar(t, t_base, t_opt, t_crit):
         return 0.0
 
 def calcular_et0_hargreaves(jday, tmax, tmin, latitud=-38.25):
-    # Latitud por defecto centrada en Lartigau (-38.25 aprox)
+    # Latitud ajustada a Lartigau (-38.25 aprox)
     lat_rad = np.radians(latitud)
     dr = 1 + 0.033 * np.cos(2 * np.pi / 365 * jday)
     dec = 0.409 * np.sin(2 * np.pi / 365 * jday - 1.39)
@@ -192,7 +194,6 @@ def get_data(file_input):
             else:
                 df = pd.read_excel(file_input, parse_dates=["Fecha"])
         else:
-            # Mantenemos la URL base del repo de github para el logo/datos, pero se pueden subir manuales
             github_url = "https://raw.githubusercontent.com/PREDWEEM/loliumTA_2026/main/meteo_daily.csv"
             try:
                 df = pd.read_csv(github_url, parse_dates=["Fecha"])
@@ -271,7 +272,7 @@ else:
 st.sidebar.caption(f"Coeficiente Ke interno aplicado: **{ke_val:.2f}**")
 
 # ---------------------------------------------------------
-# 5. MOTOR DE CÁLCULO (LÓGICA ADAPTADA LARTIGAU)
+# 5. MOTOR DE CÁLCULO (LÓGICA 100% MECANÍSTICA)
 # ---------------------------------------------------------
 if df is not None and modelo_ann is not None:
     
@@ -284,7 +285,7 @@ if df is not None and modelo_ann is not None:
     emerrel_raw, _ = modelo_ann.predict(X)
     df["EMERREL"] = np.maximum(emerrel_raw, 0.0)
     
-    # --- C. RESTRICCIÓN HÍDRICA (MÓDULO BHS) ---
+    # --- C. RESTRICCIÓN HÍDRICA (MÓDULO BHS 100% PURO) ---
     # 1. Calculamos la Evapotranspiración (ET0) - Latitud Lartigau (-38.25)
     df["ET0"] = calcular_et0_hargreaves(df["Julian_days"].values, df["TMAX"].values, df["TMIN"].values, latitud=-38.25)
     
@@ -295,13 +296,9 @@ if df is not None and modelo_ann is not None:
     humedad_relativa = df["W_superficial"] / w_max_val
     df["Hydric_Factor"] = 1 / (1 + np.exp(-10 * (humedad_relativa - 0.3)))
     
-    # Multiplicador final
+    # Multiplicador final (Sin forzados de 20mm ni ventanas empíricas de 21 días)
     df["EMERREL"] = df["EMERREL"] * df["Hydric_Factor"]
     
-    # Restricción histórica estricta para enero (Sur de Bs As)
-    df["Prec_sum_21d"] = df["Prec"].rolling(window=21, min_periods=1).sum()
-    df.loc[(df["Julian_days"] <= 25) & (df["Prec_sum_21d"] <= 50), "EMERREL"] = 0.0
-
     # --- D. CÁLCULO BIO-TÉRMICO (TT) ---
     df["Tmedia"] = (df["TMAX"] + df["TMIN"]) / 2
     df["DG"] = df["Tmedia"].apply(lambda x: calculate_tt_scalar(x, t_base_val, t_opt_max, t_critica))
@@ -338,7 +335,7 @@ if df is not None and modelo_ann is not None:
     # -----------------------------------------------------
     # VISUALIZACIÓN FRONT-END
     # -----------------------------------------------------
-    st.title("🌾 PREDWEEM LOLIUM - LARTIGAU 2026")
+    st.title("🌾 PREDWEEM LOLIUM- LARTIGAU 2026")
 
     colorscale_hard = [[0.0, "green"], [0.14, "green"], [0.15, "yellow"], [0.34, "yellow"], [0.35, "red"], [1.0, "red"]]
     fig_risk = go.Figure(data=go.Heatmap(
@@ -499,7 +496,7 @@ if df is not None and modelo_ann is not None:
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Data_Diaria')
         pd.DataFrame({'Configuracion': ['T_Base', 'T_Optima', 'T_Critica', 'W_Max', 'Ke'], 'Valor': [t_base_val, t_opt_max, t_critica, w_max_val, ke_val]}).to_excel(writer, sheet_name='Bio_Params', index=False)
-    st.sidebar.download_button("📥 Descargar Reporte", output.getvalue(), "PREDWEEM_Lartigau_BHS.xlsx")
+    st.sidebar.download_button("📥 Descargar Reporte", output.getvalue(), "PREDWEEM_Lartigau_BHS_Puro.xlsx")
 
 else:
     st.info("👋 Bienvenido. Cargue datos meteorológicos para comenzar.")
