@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ===============================================================
-# 🌾 PREDWEEM INTEGRAL vK4.9.8 — LOLIUM TRES ARROYOS 2026
+# 🌾 PREDWEEM INTEGRAL vK4.9.8 — LOLIUM LARTIGAU 2026
 # Actualización:
 # - Pearson por intervalos de monitoreo
 # - Emparejamiento por Proximidad con Regla Anti-Cruce
@@ -31,7 +31,7 @@ from scipy.signal import find_peaks
 # 1. CONFIGURACIÓN DE PÁGINA Y ESTILO
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="PREDWEEM TRES ARROYOS vK4.9.8",
+    page_title="PREDWEEM LARTIGAU vK4.9.8",
     layout="wide",
     page_icon="🌾"
 )
@@ -415,12 +415,12 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
 modelo_ann, cluster_model = load_models()
 
 st.sidebar.image(
-    "https://raw.githubusercontent.com/PREDWEEM/loliumTA_2026/main/logo.png",
+    "https://raw.githubusercontent.com/PREDWEEM/LOLIUM_LASTIGAU-2026/main/logo.png",
     use_container_width=True
 )
 st.sidebar.markdown("## 📂 1. Datos del Lote")
-archivo_meteo = st.sidebar.file_uploader("1. Clima (TRES ARROYOS)", type=["xlsx", "csv"])
-archivo_campo = st.sidebar.file_uploader("2. Campo (Validación TRES ARROYOS)", type=["xlsx", "csv"])
+archivo_meteo = st.sidebar.file_uploader("1. Clima (LARTIGAU )", type=["xlsx", "csv"])
+archivo_campo = st.sidebar.file_uploader("2. Campo (Validación LARTIGAU )", type=["xlsx", "csv"])
 
 st.sidebar.divider()
 st.sidebar.markdown("## ⚙️ 2. Fisiología y Logística")
@@ -491,8 +491,8 @@ else:
 
 st.sidebar.caption(f"Coeficiente Ke interno aplicado: **{ke_val:.2f}**")
 
-df_meteo_raw = load_data(archivo_meteo, "TRES_ARROYOS")
-df_campo_raw = load_data(archivo_campo, "TRES_ARROYOS_campo")
+df_meteo_raw = load_data(archivo_meteo, "LARTIGAU")
+df_campo_raw = load_data(archivo_campo, "LARTIGAU")
 
 # ---------------------------------------------------------
 # 5. MOTOR DE CÁLCULO
@@ -542,10 +542,6 @@ if df_meteo_raw is not None and modelo_ann is not None:
     df["Hydric_Factor"] = 1 / (1 + np.exp(-10 * (humedad_relativa - 0.3)))
     
     df["EMERREL"] = df["EMERREL"] * df["Hydric_Factor"]
-
-    # Mantenemos la suma acumulada solo para la restricción histórica específica de enero
-    df["Prec_sum_21d"] = df["Prec"].rolling(window=21, min_periods=1).sum()
-    df.loc[(df["Julian_days"] <= 25) & (df["Prec_sum_21d"] <= 50), "EMERREL"] = 0.0
 
     df["Tmedia"] = (df["TMAX"] + df["TMIN"]) / 2
     df["DG"] = df["Tmedia"].apply(lambda x: calculate_tt_scalar(x, t_base_val, t_opt_max, t_critica))
