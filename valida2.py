@@ -234,7 +234,7 @@ def evaluate_shifted_validation(df_sim, df_campo, col_fecha, col_plm2, max_shift
 
     return best
 
-def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticipo=7, tol_retraso=7, min_dist_picos=7, umbral_min_pico=0.3):
+def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticipo=7, tol_retraso=7, min_dist_picos=7, umbral_min_pico=0.75):
     sim_dates = df_sim['Fecha'].values
     sim_vals = df_sim['EMERREL'].values
     obs_dates = df_campo[col_fecha].values
