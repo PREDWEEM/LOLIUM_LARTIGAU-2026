@@ -1,15 +1,18 @@
 # -*- coding: utf-8 -*-
 # ===============================================================
-# 🌾 PREDWEEM INTEGRAL vK4.6 — LOLIUM LARTIGAU 2026
+# 🌾 PREDWEEM OPERATIVO vK4.9.8 — LOLIUM LARTIGAU 2026
 # Actualización:
 # - UNIFICACIÓN MECANÍSTICA 100%: 
 #   * Eliminado el forzado empírico de 20 mm.
 #   * Eliminada la restricción histórica de 21 días / 50 mm para enero.
-# - NUEVO: Bypass de Ruptura de Dormición por Choque Hídrico (Umbral 0.30).
+# - NUEVO: Bypass de Ruptura de Dormición por Choque Hídrico.
+# - NUEVO: Escudo Termofisiológico Dinámico (Media Móvil 10d) para inhibición estival.
+# - NUEVO: Corte Hídrico Estricto (20% HR) acoplado a la sigmoide.
 # - Módulo Mecanístico de Balance Hídrico Superficial (BHS) puro.
 # - Evapotranspiración (ET0) mediante Hargreaves-Samani (Lat ajustada a Lartigau: -38.45)
 # - Selector de manejo de lote (Rastrojo/Labranza) para Ke
 # - Gráfico dinámico de retención de agua en suelo vs Lluvias
+# - AJUSTE: Umbral de alerta por defecto y salto visual calibrado en 0.30.
 # ===============================================================
 
 import streamlit as st
@@ -24,7 +27,7 @@ from pathlib import Path
 # 1. CONFIGURACIÓN DE PÁGINA Y ESTILO
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="PREDWEEM LARTIGAU vK4.6", 
+    page_title="PREDWEEM LARTIGAU vK4.9.8", 
     layout="wide",
     page_icon="🌾"
 )
@@ -85,16 +88,6 @@ def create_mock_files_if_missing():
         }
         with open(BASE / "modelo_clusters_k3.pkl", "wb") as f:
             pickle.dump(mock_cluster, f)
-
-    if not (BASE / "meteo_daily.csv").exists():
-        dates = pd.date_range(start="2026-01-01", periods=150)
-        data = {
-            "Fecha": dates,
-            "TMAX": np.random.uniform(25, 35, size=150) - (np.arange(150)*0.1),
-            "TMIN": np.random.uniform(10, 18, size=150) - (np.arange(150)*0.06),
-            "Prec": np.random.choice([0, 0, 5, 15, 45], size=150)
-        }
-        pd.DataFrame(data).to_csv(BASE / "meteo_daily.csv", index=False)
 
 create_mock_files_if_missing()
 
@@ -235,7 +228,13 @@ st.sidebar.markdown("## ⚙️ 2. Fisiología y Logística")
 # AJUSTADO: Umbral de alerta por defecto a 0.30
 umbral_er = st.sidebar.slider("Umbral Tasa Diaria (Detección pico)", 0.05, 0.80, 0.30)
 
-st.sidebar.markdown("**Ruptura de Dormición (Otoño Temprano)**")
+st.sidebar.markdown("**Ruptura de Dormición Estival (Escudo)**")
+umbral_termoinhibicion = st.sidebar.number_input(
+    "Umbral Termoinhibición (°C)", 
+    min_value=15.0, max_value=35.0, value=24.0, step=0.5,
+    help="Si la T° Media móvil de los últimos 10 días supera este valor, la emergencia se bloquea a 0%."
+)
+
 umbral_choque_hidrico = st.sidebar.slider(
     "Choque Hídrico 3 días (mm)", 
     min_value=20.0, max_value=100.0, value=45.0, 
@@ -256,7 +255,7 @@ dga_critico = st.sidebar.number_input("Límite Ventana", value=800, step=50)
 
 st.sidebar.divider()
 st.sidebar.markdown("## 💧 3. Balance Hídrico (Suelo)")
-w_max_val = st.sidebar.number_input("Cap. de Campo Superficial (mm)", value=10.0, step=1.0)
+w_max_val = st.sidebar.number_input("Cap. de Campo Superficial (mm)", value=20.0, step=1.0)
 
 st.sidebar.markdown("**Manejo del Lote (Cobertura)**")
 tipo_manejo = st.sidebar.selectbox(
@@ -300,9 +299,9 @@ if df is not None and modelo_ann is not None:
     df["Prec_3d"] = df["Prec"].rolling(window=3, min_periods=1).sum()
     
     mask_ruptura = (df["Julian_days"] <= limite_juliano_temprano) & (df["Prec_3d"] >= umbral_choque_hidrico)
-    df.loc[mask_ruptura, "EMERREL"] = np.maximum(df.loc[mask_ruptura, "EMERREL"], 0.65)
+    df.loc[mask_ruptura, "EMERREL"] = np.maximum(df.loc[mask_ruptura, "EMERREL"], 0.75)
 
-    # --- C. RESTRICCIÓN HÍDRICA (MÓDULO BHS 100% PURO) ---
+    # --- C. RESTRICCIÓN HÍDRICA Y TÉRMICA (MÓDULO MECANÍSTICO BHS) ---
     # 1. Calculamos la Evapotranspiración (ET0) - Latitud Lartigau (-38.45)
     df["ET0"] = calcular_et0_hargreaves(df["Julian_days"].values, df["TMAX"].values, df["TMIN"].values, latitud=-38.45)
     
@@ -313,11 +312,19 @@ if df is not None and modelo_ann is not None:
     humedad_relativa = df["W_superficial"] / w_max_val
     df["Hydric_Factor"] = 1 / (1 + np.exp(-10 * (humedad_relativa - 0.3)))
     
-    # Multiplicador final (Sin forzados de 20mm ni ventanas empíricas de 21 días)
+    # Multiplicador final (Sin forzados empíricos)
     df["EMERREL"] = df["EMERREL"] * df["Hydric_Factor"]
+
+    # 4. CORTE HÍDRICO ESTRICTO
+    df.loc[humedad_relativa < 0.20, "EMERREL"] = 0.0
+
+    # 5. ESCUDO TERMOFISIOLÓGICO DINÁMICO (Bloqueo Estival por T media 10d)
+    df["Tmedia"] = (df["TMAX"] + df["TMIN"]) / 2
+    df["Tmedia_10d"] = df["Tmedia"].rolling(window=10, min_periods=1).mean()
+    mask_inhibicion = df["Tmedia_10d"] >= umbral_termoinhibicion
+    df.loc[mask_inhibicion, "EMERREL"] = 0.0
     
     # --- D. CÁLCULO BIO-TÉRMICO (TT) ---
-    df["Tmedia"] = (df["TMAX"] + df["TMIN"]) / 2
     df["DG"] = df["Tmedia"].apply(lambda x: calculate_tt_scalar(x, t_base_val, t_opt_max, t_critica))
     
     # --- E. DETECCIÓN DE VENTANA Y ACUMULADOS ---
@@ -352,27 +359,24 @@ if df is not None and modelo_ann is not None:
     # -----------------------------------------------------
     # VISUALIZACIÓN FRONT-END
     # -----------------------------------------------------
-    st.title("🌾 PREDWEEM LOLIUM- LARTIGAU 2026")
+    st.title("🌾 PREDWEEM LOLIUM - LARTIGAU 2026")
 
-    # AJUSTADO: Escala de colores personalizada (cambio en 0.30)
+    # AJUSTADO: Escala de colores personalizada para disparar el rojo en el nuevo umbral (0.30)
     colorscale_hard = [[0.0, "green"], [0.29, "green"], [0.30, "red"], [1.0, "red"]]
     fig_risk = go.Figure(data=go.Heatmap(
         z=[df["EMERREL"].values], x=df["Fecha"], y=["Emergencia"],
         colorscale=colorscale_hard, zmin=0, zmax=1, showscale=False
     ))
-    fig_risk.update_layout(height=120, margin=dict(t=30, b=0, l=10, r=10), title="Mapa de Intensidad de Emergencia")
+    fig_risk.update_layout(height=120, margin=dict(t=30, b=0, l=10, r=10), title="Mapa de Riesgo (Tasa Diaria)")
     st.plotly_chart(fig_risk, use_container_width=True)
 
     tab1, tab2, tab3, tab4 = st.tabs(["📊 MONITOR DE DECISIÓN", "💧 PRECIPITACIONES Y SUELO", "📈 ANÁLISIS ESTRATÉGICO", "🧪 BIO-CALIBRACIÓN"])
 
     with tab1:
         col_main, col_gauge = st.columns([2, 1])
-        if indices_pulso:
-            first_peak_index = indices_pulso[0]
-            fecha_inicio_ventana = df.loc[first_peak_index, "Fecha"]
-        
         dga_actual = 0.0
         dias_stress = 0
+        
         if fecha_inicio_ventana:
             df_ventana = df[df["Fecha"] >= fecha_inicio_ventana].copy()
             df_ventana["DGA_cum"] = df_ventana["DG"].cumsum()
@@ -382,11 +386,11 @@ if df is not None and modelo_ann is not None:
         with col_main:
             fig_emer = go.Figure()
             fig_emer.add_trace(go.Scatter(
-                x=df["Fecha"], y=df["EMERREL"], mode='lines', name='Tasa Diaria',
+                x=df["Fecha"], y=df["EMERREL"], mode='lines', name='Tasa Diaria Simulada',
                 line=dict(color='#166534', width=2.5), fill='tozeroy', fillcolor='rgba(22, 101, 52, 0.1)'
             ))
-            fig_emer.add_hline(y=umbral_er, line_dash="dash", line_color="orange", annotation_text=f"Umbral Pico ({umbral_er})")
-            fig_emer.update_layout(title="Dinámica de Emergencia y Detección de Picos", height=350)
+            fig_emer.add_hline(y=umbral_er, line_dash="dash", line_color="orange", annotation_text=f"Umbral Alerta ({umbral_er})")
+            fig_emer.update_layout(title="Dinámica de Emergencia y Detección de Picos", height=350, hovermode="x unified")
             st.plotly_chart(fig_emer, use_container_width=True)
 
             if fecha_inicio_ventana:
@@ -394,7 +398,7 @@ if df is not None and modelo_ann is not None:
                 if dias_stress > 0:
                     st.markdown(f"""<div class="bio-alert">🔥 <b>Estrés Térmico:</b> {dias_stress} días con T > {t_opt_max}°C desde el inicio.</div>""", unsafe_allow_html=True)
             else:
-                st.warning(f"⏳ Esperando el primer pico de emergencia (Tasa diaria >= {umbral_er}).")
+                st.warning(f"⏳ Esperando primera alerta (Tasa diaria >= {umbral_er}).")
 
         with col_gauge:
             max_axis = dga_critico * 1.2
@@ -513,8 +517,8 @@ if df is not None and modelo_ann is not None:
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Data_Diaria')
-        pd.DataFrame({'Configuracion': ['T_Base', 'T_Optima', 'T_Critica', 'W_Max', 'Ke'], 'Valor': [t_base_val, t_opt_max, t_critica, w_max_val, ke_val]}).to_excel(writer, sheet_name='Bio_Params', index=False)
-    st.sidebar.download_button("📥 Descargar Reporte", output.getvalue(), "PREDWEEM_Lartigau_BHS_Puro.xlsx")
+        pd.DataFrame({'Configuracion': ['T_Base', 'T_Optima', 'T_Critica', 'W_Max', 'Ke', 'Umbral_Termoinhibicion'], 'Valor': [t_base_val, t_opt_max, t_critica, w_max_val, ke_val, umbral_termoinhibicion]}).to_excel(writer, sheet_name='Bio_Params', index=False)
+    st.sidebar.download_button("📥 Descargar Reporte", output.getvalue(), "PREDWEEM_Operativo_Lartigau_vK4_9_8.xlsx")
 
 else:
-    st.info("👋 Bienvenido. Cargue datos meteorológicos para comenzar.")
+    st.info("👋 Bienvenido a PREDWEEM. Cargue datos meteorológicos para comenzar.")
