@@ -5,8 +5,9 @@
 # - UNIFICACIÓN MECANÍSTICA 100%: 
 #   * Eliminado el forzado empírico de 20 mm.
 #   * Eliminada la restricción histórica de 21 días / 50 mm para enero.
+# - NUEVO: Bypass de Ruptura de Dormición por Choque Hídrico (Umbral 0.30).
 # - Módulo Mecanístico de Balance Hídrico Superficial (BHS) puro.
-# - Evapotranspiración (ET0) mediante Hargreaves-Samani (Lat ajustada a Lartigau: -38.25)
+# - Evapotranspiración (ET0) mediante Hargreaves-Samani (Lat ajustada a Lartigau: -38.45)
 # - Selector de manejo de lote (Rastrojo/Labranza) para Ke
 # - Gráfico dinámico de retención de agua en suelo vs Lluvias
 # ===============================================================
@@ -121,8 +122,8 @@ def calculate_tt_scalar(t, t_base, t_opt, t_crit):
     else:
         return 0.0
 
-def calcular_et0_hargreaves(jday, tmax, tmin, latitud=-38.25):
-    # Latitud ajustada a Lartigau (-38.25 aprox)
+def calcular_et0_hargreaves(jday, tmax, tmin, latitud=-38.45):
+    # Latitud ajustada a Lartigau (-38.45 aprox)
     lat_rad = np.radians(latitud)
     dr = 1 + 0.033 * np.cos(2 * np.pi / 365 * jday)
     dec = 0.409 * np.sin(2 * np.pi / 365 * jday - 1.39)
@@ -230,7 +231,16 @@ df = get_data(archivo_usuario)
 
 st.sidebar.divider()
 st.sidebar.markdown("## ⚙️ 2. Fisiología y Logística")
-umbral_er = st.sidebar.slider("Umbral Tasa Diaria (Detección pico)", 0.05, 0.80, 0.40)
+
+# AJUSTADO: Umbral de alerta por defecto a 0.30
+umbral_er = st.sidebar.slider("Umbral Tasa Diaria (Detección pico)", 0.05, 0.80, 0.30)
+
+st.sidebar.markdown("**Ruptura de Dormición (Otoño Temprano)**")
+umbral_choque_hidrico = st.sidebar.slider(
+    "Choque Hídrico 3 días (mm)", 
+    min_value=20.0, max_value=100.0, value=45.0, 
+    help="Desbloquea la emergencia temprana si se acumula esta lluvia antes de fines de abril."
+)
 
 col_t1, col_t2 = st.sidebar.columns(2)
 with col_t1:
@@ -285,9 +295,16 @@ if df is not None and modelo_ann is not None:
     emerrel_raw, _ = modelo_ann.predict(X)
     df["EMERREL"] = np.maximum(emerrel_raw, 0.0)
     
+    # --- BYPASS AGRONÓMICO: RUPTURA DE DORMICIÓN TEMPRANA ---
+    limite_juliano_temprano = 110 # Aprox. 20 de Abril
+    df["Prec_3d"] = df["Prec"].rolling(window=3, min_periods=1).sum()
+    
+    mask_ruptura = (df["Julian_days"] <= limite_juliano_temprano) & (df["Prec_3d"] >= umbral_choque_hidrico)
+    df.loc[mask_ruptura, "EMERREL"] = np.maximum(df.loc[mask_ruptura, "EMERREL"], 0.65)
+
     # --- C. RESTRICCIÓN HÍDRICA (MÓDULO BHS 100% PURO) ---
-    # 1. Calculamos la Evapotranspiración (ET0) - Latitud Lartigau (-38.25)
-    df["ET0"] = calcular_et0_hargreaves(df["Julian_days"].values, df["TMAX"].values, df["TMIN"].values, latitud=-38.25)
+    # 1. Calculamos la Evapotranspiración (ET0) - Latitud Lartigau (-38.45)
+    df["ET0"] = calcular_et0_hargreaves(df["Julian_days"].values, df["TMAX"].values, df["TMIN"].values, latitud=-38.45)
     
     # 2. Ejecutamos el Balance Hídrico Superficial
     df["W_superficial"] = balance_hidrico_superficial(df["Prec"].values, df["ET0"].values, w_max=w_max_val, ke_suelo=ke_val)
@@ -337,7 +354,8 @@ if df is not None and modelo_ann is not None:
     # -----------------------------------------------------
     st.title("🌾 PREDWEEM LOLIUM- LARTIGAU 2026")
 
-    colorscale_hard = [[0.0, "green"], [0.39, "green"], [0.40, "red"], [1.0, "red"]]
+    # AJUSTADO: Escala de colores personalizada (cambio en 0.30)
+    colorscale_hard = [[0.0, "green"], [0.29, "green"], [0.30, "red"], [1.0, "red"]]
     fig_risk = go.Figure(data=go.Heatmap(
         z=[df["EMERREL"].values], x=df["Fecha"], y=["Emergencia"],
         colorscale=colorscale_hard, zmin=0, zmax=1, showscale=False
