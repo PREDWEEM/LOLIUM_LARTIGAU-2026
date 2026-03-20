@@ -11,10 +11,12 @@
 # - NUEVO: TN asimétrico. Match de Campo < 0.05 con Simulación < 0.30
 # - Detección agronómica de flushes de campo (Bypass SciPy)
 # - Mantenimiento de la Arquitectura ANN específica de Lartigau
+# - NUEVO: Bypass Agronómico de Ruptura de Dormición por Choque Hídrico Temprano.
 # - NUEVO: Módulo Mecanístico de Balance Hídrico Superficial (Sustituye ventana 21d)
 # - ACTUALIZACIÓN: Se elimina el forzado empírico de picos por lluvias > 20 mm para confiar 100% en el BHS.
 # - NUEVO: Visualización dinámica de la "caja" de agua (W_superficial) vs Precipitaciones.
 # - NUEVO: Menú cualitativo de Manejo del Lote (Incluye "Cobertura Muy Densa" Ke=0.15).
+# - AJUSTE: Umbral de detección general y visual calibrado en 0.30.
 # ===============================================================
 
 import streamlit as st
@@ -235,7 +237,7 @@ def evaluate_shifted_validation(df_sim, df_campo, col_fecha, col_plm2, max_shift
 
     return best
 
-def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticipo=7, tol_retraso=7, min_dist_picos=7, umbral_min_pico=0.75):
+def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticipo=7, tol_retraso=7, min_dist_picos=7, umbral_min_pico=0.30):
     sim_dates = df_sim['Fecha'].values
     sim_vals = df_sim['EMERREL'].values
     obs_dates = df_campo[col_fecha].values
@@ -425,7 +427,16 @@ archivo_campo = st.sidebar.file_uploader("2. Campo (Validación Lartigau)", type
 
 st.sidebar.divider()
 st.sidebar.markdown("## ⚙️ 2. Fisiología y Logística")
-umbral_er = st.sidebar.slider("Umbral Alerta Temprana", 0.05, 0.80, 0.50)
+# Ajuste: El umbral por defecto de alerta temprana baja a 0.30
+umbral_er = st.sidebar.slider("Umbral Alerta Temprana", 0.05, 0.80, 0.30)
+
+st.sidebar.markdown("**Ruptura de Dormición (Otoño Temprano)**")
+umbral_choque_hidrico = st.sidebar.slider(
+    "Choque Hídrico 3 días (mm)", 
+    min_value=20.0, max_value=100.0, value=45.0, 
+    help="Desbloquea la emergencia temprana si se acumula esta lluvia antes de fines de abril."
+)
+
 residualidad = st.sidebar.number_input("Residualidad Herbicida (días)", 0, 60, 20)
 
 col_t1, col_t2 = st.sidebar.columns(2)
@@ -463,7 +474,8 @@ col_p1, col_p2 = st.sidebar.columns(2)
 with col_p1:
     min_dist_picos = st.number_input("Separación Flushes (días)", min_value=1, max_value=45, value=7, step=1)
 with col_p2:
-    umbral_pico_sim = st.number_input("Umbral Mín. Pico Simulado", value=0.50, step=0.05)
+    # Ajuste: El umbral para detección de picos en cohortes baja a 0.30
+    umbral_pico_sim = st.number_input("Umbral Mín. Pico Simulado", value=0.30, step=0.05)
 
 st.sidebar.divider()
 st.sidebar.markdown("## 💧 4. Balance Hídrico (Suelo)")
@@ -532,6 +544,12 @@ if df_meteo_raw is not None and modelo_ann is not None:
     X = df[["Julian_days", "TMAX", "TMIN", "Prec"]].to_numpy(float)
     emerrel_raw, _ = modelo_ann.predict(X)
     df["EMERREL"] = np.maximum(emerrel_raw, 0.0)
+
+    # --- BYPASS AGRONÓMICO: RUPTURA DE DORMICIÓN TEMPRANA ---
+    limite_juliano_temprano = 110 # Aprox. 20 de Abril
+    df["Prec_3d"] = df["Prec"].rolling(window=3, min_periods=1).sum()
+    mask_ruptura = (df["Julian_days"] <= limite_juliano_temprano) & (df["Prec_3d"] >= umbral_choque_hidrico)
+    df.loc[mask_ruptura, "EMERREL"] = np.maximum(df.loc[mask_ruptura, "EMERREL"], 0.75) 
 
     # ---------------------------------------------------------
     # MÓDULO HÍDRICO SUPERFICIAL
@@ -626,6 +644,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
     # -----------------------------------------------------
     st.title("🌾 PREDWEEM LOLIUM - LARTIGAU 2026")
 
+    # Ajuste: Colorescales calibrados para disparar el rojo en el nuevo umbral de 0.30
     colorscale_hard = [[0.0, "green"], [0.29, "green"], [0.30, "red"], [1.0, "red"]]
 
     fig_risk = go.Figure(data=go.Heatmap(z=[df["EMERREL"].values], x=df["Fecha"], y=["Emergencia"], colorscale=colorscale_hard, zmin=0, zmax=1, showscale=False))
@@ -818,6 +837,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
                 ]
             }
             pd.DataFrame(resumen_val).to_excel(writer, sheet_name='Validacion_Campo', index=False)
+            pd.DataFrame({'Configuracion': ['T_Base', 'T_Optima', 'T_Critica', 'W_Max', 'Ke'], 'Valor': [t_base_val, t_opt_max, t_critica, w_max_val, ke_val]}).to_excel(writer, sheet_name='Bio_Params', index=False)
 
     st.sidebar.download_button("📥 Descargar Reporte Completo", output.getvalue(), "PREDWEEM_Integral_Lartigau_vK4_9_8.xlsx")
 
