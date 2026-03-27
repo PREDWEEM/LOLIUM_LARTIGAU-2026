@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 # ===============================================================
 # 🌾 PREDWEEM INTEGRAL vK4.9.8 — LOLIUM LARTIGAU 2026
@@ -17,6 +16,7 @@
 # - AJUSTE: Umbral de detección general y visual calibrado en 0.30.
 # - NUEVO: Escudo Termofisiológico Dinámico (Media Móvil 10d) para inhibición estival.
 # - NUEVO: Corte Hídrico Estricto (20% HR) acoplado a la sigmoide.
+# - NUEVO: Bloqueo de emergencia (0%) hasta que una LLUVIA PUNTUAL supere la Capacidad de Campo.
 # ===============================================================
 
 import streamlit as st
@@ -164,15 +164,12 @@ class PracticalANNModel:
 
     def predict(self, Xreal):
         Xn = self.normalize(Xreal)
-        emer = []
-        for x in Xn:
-            z1 = self.IW.T @ x + self.bIW
-            a1 = np.tanh(z1)
-            z2 = self.LW @ a1 + self.bLW
-            emer.append(np.tanh(z2))
-        emer = (np.array(emer).flatten() + 1) / 2
-        emer_ac = np.cumsum(emer)
-        emerrel = np.diff(emer_ac, prepend=0)
+        # Vectorización matricial
+        z1 = Xn @ self.IW + self.bIW
+        a1 = np.tanh(z1)
+        z2 = (a1 @ self.LW.T).flatten() + self.bLW
+        emerrel = (np.tanh(z2) + 1) / 2
+        emer_ac = np.cumsum(emerrel)
         return emerrel, emer_ac
 
 @st.cache_resource
@@ -385,10 +382,8 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
                 obs_date = obs_peak_dates[m_obs]
                 sim_date_m = sim_peak_dates[m_sim]
                 
-                # Condición A: El valor de campo está en el medio de ambos picos simulados
                 if (sim_date_i <= obs_date <= sim_date_m) or (sim_date_m <= obs_date <= sim_date_i):
                     
-                    # Condición B: Son contiguos (no hay ningún otro pico válido separándolos)
                     picos_intermedios = 0
                     min_idx, max_idx = min(i, m_sim), max(i, m_sim)
                     for k in range(min_idx + 1, max_idx):
@@ -397,7 +392,6 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
                             
                     if picos_intermedios == 0:
                         
-                        # Condición C: El pico gemelo sigue estando dentro de las tolerancias
                         days_diff = (obs_date - sim_date_i).days
                         if -tol_retraso <= days_diff <= tol_anticipo:
                             tp_points.append((sim_date_i, sim_vals[peaks_sim[i]]))
@@ -411,14 +405,12 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
                 es_error_real = True
                 sim_date_i = sim_peak_dates[i]
                 
-                # Regla de Indulto A: Está dentro de la ventana de un True Positive
                 for obs_idx in matched_obs:
                     obs_date = obs_peak_dates[obs_idx]
                     if -tol_retraso <= (obs_date - sim_date_i).days <= tol_anticipo:
                         es_error_real = False
                         break
                 
-                # Regla de Indulto B: Es contiguo (<= min_dist_picos) a un pico simulado que ya es True Positive
                 if es_error_real:
                     for m_sim in matched_sim:
                         sim_date_m = sim_peak_dates[m_sim]
@@ -426,7 +418,6 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
                             es_error_real = False
                             break
                 
-                # Si sobró y no tiene indulto, es un FP real (Error)
                 if es_error_real:
                     fp_points.append((sim_peak_dates[i], sim_vals_peaks[peaks_sim[i]]))
             
@@ -617,6 +608,10 @@ if df_meteo_raw is not None and modelo_ann is not None:
     # CORTE HÍDRICO ESTRICTO
     df.loc[humedad_relativa < 0.20, "EMERREL"] = 0.0
 
+    # TRIGGER DE RECARGA INICIAL (Lluvia puntual)
+    df['Lluvia_Recarga'] = (df['Prec'] >= w_max_val).cummax()
+    df.loc[~df['Lluvia_Recarga'], "EMERREL"] = 0.0
+
     # ESCUDO TERMOFISIOLÓGICO DINÁMICO (Bloqueo Estival)
     df["Tmedia"] = (df["TMAX"] + df["TMIN"]) / 2
     df["Tmedia_10d"] = df["Tmedia"].rolling(window=10, min_periods=1).mean()
@@ -669,6 +664,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
         
         cohort_metrics = evaluate_cohort_detection(df, df_campo, col_fecha, col_plm2, tol_anticipo, tol_retraso, min_dist_picos, umbral_pico_sim)
 
+        # ELIMINACIÓN VISUAL: Borramos toda la montaña del pico falso de la gráfica principal
         if cohort_metrics.get("zeroed_indices"):
             df.loc[cohort_metrics["zeroed_indices"], "EMERREL"] = 0.0
 
