@@ -248,7 +248,7 @@ def get_data(file_input):
 modelo_ann, cluster_model = load_models()
 
 # --- HEADER PRINCIPAL ---
-st.title("🌾 PREDWEEM LOLIUM - LARTIGAU 2026")
+st.title("🌾 PREDWEEM LOLIUM - LARTIGAU lat=-38.6166 lon=-61.7 ")
 
 # --- MENÚ DESPLEGABLE: DATOS DEL LOTE (MAIN PAGE) ---
 with st.expander("📂 1. Datos del Lote", expanded=True):
