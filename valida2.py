@@ -2,7 +2,7 @@
 # ===============================================================
 # 🌾 PREDWEEM INTEGRAL vK4.9.8 — LOLIUM LARTIGAU 2026
 # Actualización:
-# - CURVA CONTINUA: Suavizado híbrido para unir picos contiguos fluidamente.
+# - CURVA CONTINUA CON PICOS 100% PUROS: Unión de cohortes sin achatar valores máximos.
 # - DESBLOQUEO TEMPRANO: Ajuste del trigger de recarga al 50% de Capacidad de Campo.
 # - Pearson por intervalos de monitoreo
 # - Emparejamiento por Proximidad con Regla Anti-Cruce
@@ -631,18 +631,17 @@ if df_meteo_raw is not None and modelo_ann is not None:
     df.loc[mask_inhibicion, "EMERREL"] = 0.0
 
     # =========================================================================
-    # NUEVO: CURVA CONTINUA PARA PICOS CONTIGUOS (Suavizado Híbrido)
+    # NUEVO: CURVA CONTINUA CON PICOS 100% PUROS E INTACTOS
     # =========================================================================
     emerrel_original = df["EMERREL"].copy()
     
     # 1. Base continua: Promedio móvil clásico de 7 días 
+    # Esto actúa como el "puente" inferior para unir días contiguos.
     base_suavizada = df["EMERREL"].rolling(window=7, min_periods=1).mean()
     
-    # 2. Rescatar picos: Tomamos la altura original pero usamos la base para unir los espacios
-    curva_hibrida = np.maximum(emerrel_original, base_suavizada)
-    
-    # 3. Pulido final: Ligero suavizado (3 días) para que la unión de las montañas sea perfecta
-    df["EMERREL"] = curva_hibrida.rolling(window=3, min_periods=1).mean()
+    # 2. Superposición pura: Tomamos el máximo entre el puente y el valor original.
+    # El pico real jamás se promedia ni se achata. Si el modelo generó 0.85, queda exactamente en 0.85.
+    df["EMERREL"] = np.maximum(emerrel_original, base_suavizada)
     # =========================================================================
 
     df["DG"] = df["Tmedia"].apply(lambda x: calculate_tt_scalar(x, t_base_val, t_opt_max, t_critica))
@@ -691,12 +690,6 @@ if df_meteo_raw is not None and modelo_ann is not None:
         
         cohort_metrics = evaluate_cohort_detection(df, df_campo, col_fecha, col_plm2, tol_anticipo, tol_retraso, min_dist_picos, umbral_pico_sim)
 
-        # ELIMINACIÓN VISUAL DESACTIVADA: 
-        # Esto evita que se generen caídas a cero abruptas entre picos contiguos.
-        # Las métricas internas igual ignorarán los ecos correctamente.
-        # if cohort_metrics.get("zeroed_indices"):
-        #     df.loc[cohort_metrics["zeroed_indices"], "EMERREL"] = 0.0
-
         tot_plm2 = df_campo[col_plm2].sum()
         if tot_plm2 > 0:
             df_campo['cum_plm2_norm'] = df_campo[col_plm2].cumsum() / tot_plm2
@@ -732,7 +725,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
     colorscale_hard = [[0.0, "green"], [0.29, "green"], [0.30, "red"], [1.0, "red"]]
 
     fig_risk = go.Figure(data=go.Heatmap(z=[df["EMERREL"].values], x=df["Fecha"], y=["Emergencia"], colorscale=colorscale_hard, zmin=0, zmax=1, showscale=False))
-    fig_risk.update_layout(height=120, margin=dict(t=30, b=0, l=10, r=10), title="Mapa de Riesgo (Curva Continua)")
+    fig_risk.update_layout(height=120, margin=dict(t=30, b=0, l=10, r=10), title="Mapa de Riesgo (Curva Continua + Picos Puros)")
     st.plotly_chart(fig_risk, use_container_width=True)
 
     tab1, tab2, tab3, tab4 = st.tabs(["📊 MONITOR DE DECISIÓN", "💧 PRECIPITACIONES Y SUELO", "📈 ANÁLISIS ESTRATÉGICO", "🧪 BIO-CALIBRACIÓN"])
