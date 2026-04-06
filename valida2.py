@@ -2,6 +2,7 @@
 # ===============================================================
 # 🌾 PREDWEEM INTEGRAL vK4.9.8 — LOLIUM LARTIGAU 2026
 # Actualización:
+# - Promedio móvil de 7 días para sincronización con muestreos a campo.
 # - Pearson por intervalos de monitoreo
 # - Emparejamiento por Proximidad con Regla Anti-Cruce
 # - CORRECCIÓN DEFINITIVA: Eliminación total de réplicas (Ecos) en cadena.
@@ -13,7 +14,7 @@
 # - Mantenimiento de la Arquitectura ANN específica de Lartigau
 # - NUEVO: Bypass Agronómico de Ruptura de Dormición por Choque Hídrico Temprano.
 # - NUEVO: Módulo Mecanístico de Balance Hídrico Superficial (BHS) con Secado Exponencial (Kr).
-# - AJUSTE: Umbral de detección general y visual calibrado en 0.30.
+# - AJUSTE: Umbrales calibrados para la meseta de 7 días.
 # - NUEVO: Escudo Termofisiológico Dinámico (Media Móvil 10d) para inhibición estival.
 # - NUEVO: Corte Hídrico Estricto (20% HR) acoplado a la sigmoide.
 # - NUEVO: Bloqueo de emergencia (0%) hasta que una LLUVIA PUNTUAL supere la Capacidad de Campo.
@@ -123,7 +124,6 @@ def calculate_tt_scalar(t, t_base, t_opt, t_crit):
         return 0.0
 
 def calcular_et0_hargreaves(jday, tmax, tmin, latitud=-38.45):
-    # Latitud por defecto centrada en Lartigau
     lat_rad = np.radians(latitud)
     dr = 1 + 0.033 * np.cos(2 * np.pi / 365 * jday)
     dec = 0.409 * np.sin(2 * np.pi / 365 * jday - 1.39)
@@ -139,7 +139,6 @@ def calcular_et0_hargreaves(jday, tmax, tmin, latitud=-38.45):
     et0 = 0.0023 * ra_mm * (tmean + 17.8) * np.sqrt(trange)
     return np.maximum(et0, 0)
 
-# MODIFICACIÓN: Secado dinámico con factor Kr
 def balance_hidrico_superficial(prec, et0, w_max=20.0, ke_suelo_max=0.4):
     n = len(prec)
     w = np.zeros(n)
@@ -165,7 +164,6 @@ class PracticalANNModel:
 
     def predict(self, Xreal):
         Xn = self.normalize(Xreal)
-        # Vectorización matricial
         z1 = Xn @ self.IW + self.bIW
         a1 = np.tanh(z1)
         z2 = (a1 @ self.LW.T).flatten() + self.bLW
@@ -294,7 +292,6 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
 
             for idx in grupo_contiguos:
                 if idx != mejor_idx:
-                    # Evitar que el filtro elimine el pico secundario si hay un valor de campo justo en el medio
                     es_flanqueante = False
                     for obs_date in obs_peak_dates:
                         d_idx = sim_peak_dates[idx]
@@ -482,18 +479,18 @@ archivo_campo = st.sidebar.file_uploader("2. Campo (Validación Lartigau)", type
 
 st.sidebar.divider()
 st.sidebar.markdown("## ⚙️ 2. Fisiología y Logística")
-umbral_er = st.sidebar.slider("Umbral Alerta Temprana", 0.05, 0.80, 0.30)
+umbral_er = st.sidebar.slider("Umbral Alerta Temprana", 0.05, 0.80, 0.15) # Ajustado por promedio 7d
 
 st.sidebar.markdown("**Ruptura de Dormición Estival (Escudo)**")
 umbral_termoinhibicion = st.sidebar.number_input(
     "Umbral Termoinhibición (°C)", 
-    min_value=15.0, max_value=35.0, value=24.0, step=0.5,
+    min_value=15.0, max_value=35.0, value=27.0, step=0.5, # Ajustado para Lartigau
     help="Si la T° Media móvil de los últimos 10 días supera este valor, la emergencia se bloquea a 0%."
 )
 
 umbral_choque_hidrico = st.sidebar.slider(
     "Choque Hídrico 3 días (mm)", 
-    min_value=20.0, max_value=100.0, value=45.0, 
+    min_value=10.0, max_value=100.0, value=25.0, # Ajustado para Lartigau
     help="Desbloquea la emergencia temprana si se acumula esta lluvia antes de fines de abril."
 )
 
@@ -505,31 +502,31 @@ with col_t1:
 with col_t2:
     t_opt_max = st.number_input("T Óptima Max", value=20.0, step=1.0)
 
-t_critica = st.sidebar.slider("T Crítica (Stop)", 26.0, 42.0, 30.0)
+t_critica = st.sidebar.slider("T Crítica (Stop)", 26.0, 42.0, 33.0) # Ajustado para fenología de calor
 
 st.sidebar.markdown("**Objetivos (°Cd)**")
 dga_optimo = st.sidebar.number_input("TT Control Post-emergente (°Cd)", value=600, step=10)
 dga_critico = st.sidebar.number_input("Límite Ventana (°Cd)", value=800, step=10)
 
 st.sidebar.markdown("## 🧪 3. Validación")
-max_desfase_validacion = st.sidebar.slider("Desfase admisible Pearson (días)", 0, 10, 10)
+max_desfase_validacion = st.sidebar.slider("Desfase admisible Pearson (días)", 0, 15, 12) # Aumentado a 12
 
 st.sidebar.markdown("**Tolerancia Cohortes (Días)**")
 col_v1, col_v2 = st.sidebar.columns(2)
 with col_v1:
     tol_anticipo = st.number_input("Anticipo (+)", value=7, step=1)
 with col_v2:
-    tol_retraso = st.number_input("Retraso (-)", value=7, step=1) 
+    tol_retraso = st.number_input("Retraso (-)", value=10, step=1) # Aumentado a 10
 
 col_p1, col_p2 = st.sidebar.columns(2)
 with col_p1:
     min_dist_picos = st.number_input("Separación Flushes (días)", min_value=1, max_value=45, value=7, step=1)
 with col_p2:
-    umbral_pico_sim = st.number_input("Umbral Mín. Pico Simulado", value=0.30, step=0.05)
+    umbral_pico_sim = st.number_input("Umbral Mín. Pico Simulado", value=0.15, step=0.05) # Ajustado por promedio 7d
 
 st.sidebar.divider()
 st.sidebar.markdown("## 💧 4. Balance Hídrico (Suelo)")
-w_max_val = st.sidebar.number_input("Cap. de Campo Superficial (mm)", value=20.0, step=1.0)
+w_max_val = st.sidebar.number_input("Cap. de Campo Superficial (mm)", value=30.0, step=1.0) # Aumentado a 30
 
 st.sidebar.markdown("**Manejo del Lote (Cobertura)**")
 tipo_manejo = st.sidebar.selectbox(
@@ -540,10 +537,9 @@ tipo_manejo = st.sidebar.selectbox(
         "Cobertura Media (SD - Rastrojo Soja)",
         "Baja Cobertura / Labranza Convencional"
     ],
-    index=1 
+    index=0 # Por defecto Muy Densa (Ke=0.10) para Lartigau
 )
 
-# Lógica de cobertura ampliada
 if "Muy Densa" in tipo_manejo:
     ke_val = 0.10      
     mod_termico = 0.80 
@@ -611,7 +607,6 @@ if df_meteo_raw is not None and modelo_ann is not None:
     # ---------------------------------------------------------
     # MÓDULO HÍDRICO SUPERFICIAL Y TÉRMICO
     # ---------------------------------------------------------
-    # Nota: ET0 usa las temperaturas del aire porque es demanda atmosférica.
     df["ET0"] = calcular_et0_hargreaves(df["Julian_days"].values, df["TMAX"].values, df["TMIN"].values, latitud=-38.45)
     
     # Aplicación del BHS con Kr Dinámico
@@ -633,6 +628,12 @@ if df_meteo_raw is not None and modelo_ann is not None:
     df["Tmedia_10d"] = df["Tmedia"].rolling(window=10, min_periods=1).mean()
     mask_inhibicion = df["Tmedia_10d"] >= umbral_termoinhibicion
     df.loc[mask_inhibicion, "EMERREL"] = 0.0
+
+    # =========================================================================
+    # NUEVO: PROMEDIO MÓVIL DE 7 DÍAS (Sincronización con muestreo a campo)
+    # =========================================================================
+    df["EMERREL"] = df["EMERREL"].rolling(window=7, min_periods=1).mean()
+    # =========================================================================
 
     df["DG"] = df["Tmedia"].apply(lambda x: calculate_tt_scalar(x, t_base_val, t_opt_max, t_critica))
 
@@ -719,7 +720,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
     colorscale_hard = [[0.0, "green"], [0.29, "green"], [0.30, "red"], [1.0, "red"]]
 
     fig_risk = go.Figure(data=go.Heatmap(z=[df["EMERREL"].values], x=df["Fecha"], y=["Emergencia"], colorscale=colorscale_hard, zmin=0, zmax=1, showscale=False))
-    fig_risk.update_layout(height=120, margin=dict(t=30, b=0, l=10, r=10), title="Mapa de Riesgo (Tasa Diaria)")
+    fig_risk.update_layout(height=120, margin=dict(t=30, b=0, l=10, r=10), title="Mapa de Riesgo (Tasa Suavizada 7d)")
     st.plotly_chart(fig_risk, use_container_width=True)
 
     tab1, tab2, tab3, tab4 = st.tabs(["📊 MONITOR DE DECISIÓN", "💧 PRECIPITACIONES Y SUELO", "📈 ANÁLISIS ESTRATÉGICO", "🧪 BIO-CALIBRACIÓN"])
@@ -757,7 +758,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
 
         with col_main:
             fig_emer = go.Figure()
-            fig_emer.add_trace(go.Scatter(x=df["Fecha"], y=df["EMERREL"], mode='lines', name='Tasa Diaria Simulada', line=dict(color='#166534', width=2.5), fill='tozeroy', fillcolor='rgba(22, 101, 52, 0.1)'))
+            fig_emer.add_trace(go.Scatter(x=df["Fecha"], y=df["EMERREL"], mode='lines', name='Tasa Simulada (Media 7d)', line=dict(color='#166534', width=2.5), fill='tozeroy', fillcolor='rgba(22, 101, 52, 0.1)'))
             fig_emer.add_hline(y=umbral_er, line_dash="dash", line_color="orange", annotation_text=f"Umbral Alerta ({umbral_er})")
 
             if df_campo is not None:
@@ -798,7 +799,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
                 else:
                     st.info(f"⏳ **En Progreso:** Aún no se han acumulado los {dga_optimo} °Cd requeridos para el control.")
             else:
-                st.warning(f"⏳ Esperando primera alerta (Tasa diaria >= {umbral_er}).")
+                st.warning(f"⏳ Esperando primera alerta (Tasa media 7d >= {umbral_er}).")
 
         with col_gauge:
             max_axis = dga_critico * 1.2
