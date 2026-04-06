@@ -2,7 +2,7 @@
 # ===============================================================
 # 🌾 PREDWEEM INTEGRAL vK4.9.8 — LOLIUM LARTIGAU 2026
 # Actualización:
-# - Promedio móvil de 7 días para sincronización con muestreos a campo.
+# - Promedio móvil de 7 días con RESCATE DE PICOS AISLADOS.
 # - Pearson por intervalos de monitoreo
 # - Emparejamiento por Proximidad con Regla Anti-Cruce
 # - CORRECCIÓN DEFINITIVA: Eliminación total de réplicas (Ecos) en cadena.
@@ -479,18 +479,18 @@ archivo_campo = st.sidebar.file_uploader("2. Campo (Validación Lartigau)", type
 
 st.sidebar.divider()
 st.sidebar.markdown("## ⚙️ 2. Fisiología y Logística")
-umbral_er = st.sidebar.slider("Umbral Alerta Temprana", 0.05, 0.80, 0.15) # Ajustado por promedio 7d
+umbral_er = st.sidebar.slider("Umbral Alerta Temprana", 0.05, 0.80, 0.15) 
 
 st.sidebar.markdown("**Ruptura de Dormición Estival (Escudo)**")
 umbral_termoinhibicion = st.sidebar.number_input(
     "Umbral Termoinhibición (°C)", 
-    min_value=15.0, max_value=35.0, value=27.0, step=0.5, # Ajustado para Lartigau
+    min_value=15.0, max_value=35.0, value=27.0, step=0.5, 
     help="Si la T° Media móvil de los últimos 10 días supera este valor, la emergencia se bloquea a 0%."
 )
 
 umbral_choque_hidrico = st.sidebar.slider(
     "Choque Hídrico 3 días (mm)", 
-    min_value=10.0, max_value=100.0, value=25.0, # Ajustado para Lartigau
+    min_value=10.0, max_value=100.0, value=25.0, 
     help="Desbloquea la emergencia temprana si se acumula esta lluvia antes de fines de abril."
 )
 
@@ -502,31 +502,31 @@ with col_t1:
 with col_t2:
     t_opt_max = st.number_input("T Óptima Max", value=20.0, step=1.0)
 
-t_critica = st.sidebar.slider("T Crítica (Stop)", 26.0, 42.0, 33.0) # Ajustado para fenología de calor
+t_critica = st.sidebar.slider("T Crítica (Stop)", 26.0, 42.0, 33.0) 
 
 st.sidebar.markdown("**Objetivos (°Cd)**")
 dga_optimo = st.sidebar.number_input("TT Control Post-emergente (°Cd)", value=600, step=10)
 dga_critico = st.sidebar.number_input("Límite Ventana (°Cd)", value=800, step=10)
 
 st.sidebar.markdown("## 🧪 3. Validación")
-max_desfase_validacion = st.sidebar.slider("Desfase admisible Pearson (días)", 0, 15, 12) # Aumentado a 12
+max_desfase_validacion = st.sidebar.slider("Desfase admisible Pearson (días)", 0, 15, 12) 
 
 st.sidebar.markdown("**Tolerancia Cohortes (Días)**")
 col_v1, col_v2 = st.sidebar.columns(2)
 with col_v1:
     tol_anticipo = st.number_input("Anticipo (+)", value=7, step=1)
 with col_v2:
-    tol_retraso = st.number_input("Retraso (-)", value=10, step=1) # Aumentado a 10
+    tol_retraso = st.number_input("Retraso (-)", value=10, step=1) 
 
 col_p1, col_p2 = st.sidebar.columns(2)
 with col_p1:
     min_dist_picos = st.number_input("Separación Flushes (días)", min_value=1, max_value=45, value=7, step=1)
 with col_p2:
-    umbral_pico_sim = st.number_input("Umbral Mín. Pico Simulado", value=0.15, step=0.05) # Ajustado por promedio 7d
+    umbral_pico_sim = st.number_input("Umbral Mín. Pico Simulado", value=0.15, step=0.05) 
 
 st.sidebar.divider()
 st.sidebar.markdown("## 💧 4. Balance Hídrico (Suelo)")
-w_max_val = st.sidebar.number_input("Cap. de Campo Superficial (mm)", value=30.0, step=1.0) # Aumentado a 30
+w_max_val = st.sidebar.number_input("Cap. de Campo Superficial (mm)", value=30.0, step=1.0) 
 
 st.sidebar.markdown("**Manejo del Lote (Cobertura)**")
 tipo_manejo = st.sidebar.selectbox(
@@ -537,7 +537,7 @@ tipo_manejo = st.sidebar.selectbox(
         "Cobertura Media (SD - Rastrojo Soja)",
         "Baja Cobertura / Labranza Convencional"
     ],
-    index=0 # Por defecto Muy Densa (Ke=0.10) para Lartigau
+    index=0 
 )
 
 if "Muy Densa" in tipo_manejo:
@@ -630,9 +630,25 @@ if df_meteo_raw is not None and modelo_ann is not None:
     df.loc[mask_inhibicion, "EMERREL"] = 0.0
 
     # =========================================================================
-    # NUEVO: PROMEDIO MÓVIL DE 7 DÍAS (Sincronización con muestreo a campo)
+    # NUEVO: PROMEDIO MÓVIL DE 7 DÍAS CON RESCATE DE PICOS AISLADOS
     # =========================================================================
+    emerrel_original = df["EMERREL"].copy()
+    
     df["EMERREL"] = df["EMERREL"].rolling(window=7, min_periods=1).mean()
+    
+    # Detectar picos aislados (valor original > 0, pero con ceros el día anterior y posterior)
+    mask_aislados = (emerrel_original > 0) & \
+                    (emerrel_original.shift(1, fill_value=0) == 0) & \
+                    (emerrel_original.shift(-1, fill_value=0) == 0)
+                    
+    # Restaurar el valor original para los picos aislados
+    df.loc[mask_aislados, "EMERREL"] = emerrel_original[mask_aislados]
+    
+    # Limpiar la "cola falsa" (residuo del promedio) que queda los 6 días posteriores al pico
+    for idx in df.index[mask_aislados]:
+        for i in range(1, 7):
+            if idx + i < len(df) and emerrel_original.loc[idx + i] == 0.0:
+                df.loc[idx + i, "EMERREL"] = 0.0
     # =========================================================================
 
     df["DG"] = df["Tmedia"].apply(lambda x: calculate_tt_scalar(x, t_base_val, t_opt_max, t_critica))
