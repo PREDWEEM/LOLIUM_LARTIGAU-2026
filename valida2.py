@@ -2,12 +2,12 @@
 # ===============================================================
 # 🌾 PREDWEEM INTEGRAL vK4.9.8 — LOLIUM LARTIGAU 2026
 # Actualización:
-# - Promedio móvil de 7 días con RESCATE DE PICOS AISLADOS.
+# - CURVA CONTINUA: Suavizado híbrido para unir picos contiguos fluidamente.
+# - DESBLOQUEO TEMPRANO: Ajuste del trigger de recarga al 50% de Capacidad de Campo.
 # - Pearson por intervalos de monitoreo
 # - Emparejamiento por Proximidad con Regla Anti-Cruce
 # - CORRECCIÓN DEFINITIVA: Eliminación total de réplicas (Ecos) en cadena.
 # - SELECCIÓN DE PICO: Se prioriza el más cercano al dato de campo.
-# - APLANAMIENTO DE ECOS: Eliminación visual completa de la montaña del eco falso.
 # - NUEVO MATCH N-A-1: Observaciones de la "rampa de subida" pueden emparejarse al mismo pico simulado.
 # - NUEVO: TN asimétrico. Match de Campo < 0.05 con Simulación < 0.30
 # - Detección agronómica de flushes de campo (Lógica Gemelos Flanqueantes + Filtro de Indulto para FP).
@@ -17,7 +17,6 @@
 # - AJUSTE: Umbrales calibrados para la meseta de 7 días.
 # - NUEVO: Escudo Termofisiológico Dinámico (Media Móvil 10d) para inhibición estival.
 # - NUEVO: Corte Hídrico Estricto (20% HR) acoplado a la sigmoide.
-# - NUEVO: Bloqueo de emergencia (0%) hasta que una LLUVIA PUNTUAL supere la Capacidad de Campo.
 # - MEJORA: Sensibilidad térmica e hídrica agresiva según nivel de rastrojo.
 # ===============================================================
 
@@ -598,12 +597,6 @@ if df_meteo_raw is not None and modelo_ann is not None:
     emerrel_raw, _ = modelo_ann.predict(X)
     df["EMERREL"] = np.maximum(emerrel_raw, 0.0)
 
-    # --- BYPASS AGRONÓMICO: RUPTURA DE DORMICIÓN TEMPRANA ---
-    limite_juliano_temprano = 110 # Aprox. 20 de Abril
-    df["Prec_3d"] = df["Prec"].rolling(window=3, min_periods=1).sum()
-    mask_ruptura = (df["Julian_days"] <= limite_juliano_temprano) & (df["Prec_3d"] >= umbral_choque_hidrico)
-    df.loc[mask_ruptura, "EMERREL"] = np.maximum(df.loc[mask_ruptura, "EMERREL"], 0.75) 
-
     # ---------------------------------------------------------
     # MÓDULO HÍDRICO SUPERFICIAL Y TÉRMICO
     # ---------------------------------------------------------
@@ -620,8 +613,16 @@ if df_meteo_raw is not None and modelo_ann is not None:
     df.loc[humedad_relativa < 0.20, "EMERREL"] = 0.0
 
     # TRIGGER DE RECARGA INICIAL (Lluvia puntual)
-    df['Lluvia_Recarga'] = (df['Prec'] >= w_max_val).cummax()
+    # Se reduce el trigger al 50% de la capacidad de campo para que lluvias 
+    # de enero/febrero permitan activar el modelo y liberen el pico del 17 Feb.
+    df['Lluvia_Recarga'] = (df['Prec'] >= (w_max_val * 0.5)).cummax()
     df.loc[~df['Lluvia_Recarga'], "EMERREL"] = 0.0
+
+    # --- BYPASS AGRONÓMICO: RUPTURA DE DORMICIÓN TEMPRANA ---
+    limite_juliano_temprano = 110 # Aprox. 20 de Abril
+    df["Prec_3d"] = df["Prec"].rolling(window=3, min_periods=1).sum()
+    mask_ruptura = (df["Julian_days"] <= limite_juliano_temprano) & (df["Prec_3d"] >= umbral_choque_hidrico)
+    df.loc[mask_ruptura, "EMERREL"] = np.maximum(df.loc[mask_ruptura, "EMERREL"], 0.75) 
 
     # ESCUDO TERMOFISIOLÓGICO DINÁMICO (Bloqueo Estival por T media 10d - del aire)
     df["Tmedia"] = df["Tmedia_aire"]
@@ -630,25 +631,18 @@ if df_meteo_raw is not None and modelo_ann is not None:
     df.loc[mask_inhibicion, "EMERREL"] = 0.0
 
     # =========================================================================
-    # NUEVO: PROMEDIO MÓVIL DE 7 DÍAS CON RESCATE DE PICOS AISLADOS
+    # NUEVO: CURVA CONTINUA PARA PICOS CONTIGUOS (Suavizado Híbrido)
     # =========================================================================
     emerrel_original = df["EMERREL"].copy()
     
-    df["EMERREL"] = df["EMERREL"].rolling(window=7, min_periods=1).mean()
+    # 1. Base continua: Promedio móvil clásico de 7 días 
+    base_suavizada = df["EMERREL"].rolling(window=7, min_periods=1).mean()
     
-    # Detectar picos aislados (valor original > 0, pero con ceros el día anterior y posterior)
-    mask_aislados = (emerrel_original > 0) & \
-                    (emerrel_original.shift(1, fill_value=0) == 0) & \
-                    (emerrel_original.shift(-1, fill_value=0) == 0)
-                    
-    # Restaurar el valor original para los picos aislados
-    df.loc[mask_aislados, "EMERREL"] = emerrel_original[mask_aislados]
+    # 2. Rescatar picos: Tomamos la altura original pero usamos la base para unir los espacios
+    curva_hibrida = np.maximum(emerrel_original, base_suavizada)
     
-    # Limpiar la "cola falsa" (residuo del promedio) que queda los 6 días posteriores al pico
-    for idx in df.index[mask_aislados]:
-        for i in range(1, 7):
-            if idx + i < len(df) and emerrel_original.loc[idx + i] == 0.0:
-                df.loc[idx + i, "EMERREL"] = 0.0
+    # 3. Pulido final: Ligero suavizado (3 días) para que la unión de las montañas sea perfecta
+    df["EMERREL"] = curva_hibrida.rolling(window=3, min_periods=1).mean()
     # =========================================================================
 
     df["DG"] = df["Tmedia"].apply(lambda x: calculate_tt_scalar(x, t_base_val, t_opt_max, t_critica))
@@ -697,9 +691,11 @@ if df_meteo_raw is not None and modelo_ann is not None:
         
         cohort_metrics = evaluate_cohort_detection(df, df_campo, col_fecha, col_plm2, tol_anticipo, tol_retraso, min_dist_picos, umbral_pico_sim)
 
-        # ELIMINACIÓN VISUAL: Borramos toda la montaña del pico falso de la gráfica principal
-        if cohort_metrics.get("zeroed_indices"):
-            df.loc[cohort_metrics["zeroed_indices"], "EMERREL"] = 0.0
+        # ELIMINACIÓN VISUAL DESACTIVADA: 
+        # Esto evita que se generen caídas a cero abruptas entre picos contiguos.
+        # Las métricas internas igual ignorarán los ecos correctamente.
+        # if cohort_metrics.get("zeroed_indices"):
+        #     df.loc[cohort_metrics["zeroed_indices"], "EMERREL"] = 0.0
 
         tot_plm2 = df_campo[col_plm2].sum()
         if tot_plm2 > 0:
@@ -736,7 +732,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
     colorscale_hard = [[0.0, "green"], [0.29, "green"], [0.30, "red"], [1.0, "red"]]
 
     fig_risk = go.Figure(data=go.Heatmap(z=[df["EMERREL"].values], x=df["Fecha"], y=["Emergencia"], colorscale=colorscale_hard, zmin=0, zmax=1, showscale=False))
-    fig_risk.update_layout(height=120, margin=dict(t=30, b=0, l=10, r=10), title="Mapa de Riesgo (Tasa Suavizada 7d)")
+    fig_risk.update_layout(height=120, margin=dict(t=30, b=0, l=10, r=10), title="Mapa de Riesgo (Curva Continua)")
     st.plotly_chart(fig_risk, use_container_width=True)
 
     tab1, tab2, tab3, tab4 = st.tabs(["📊 MONITOR DE DECISIÓN", "💧 PRECIPITACIONES Y SUELO", "📈 ANÁLISIS ESTRATÉGICO", "🧪 BIO-CALIBRACIÓN"])
@@ -774,7 +770,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
 
         with col_main:
             fig_emer = go.Figure()
-            fig_emer.add_trace(go.Scatter(x=df["Fecha"], y=df["EMERREL"], mode='lines', name='Tasa Simulada (Media 7d)', line=dict(color='#166534', width=2.5), fill='tozeroy', fillcolor='rgba(22, 101, 52, 0.1)'))
+            fig_emer.add_trace(go.Scatter(x=df["Fecha"], y=df["EMERREL"], mode='lines', name='Tasa Simulada', line=dict(color='#166534', width=2.5), fill='tozeroy', fillcolor='rgba(22, 101, 52, 0.1)'))
             fig_emer.add_hline(y=umbral_er, line_dash="dash", line_color="orange", annotation_text=f"Umbral Alerta ({umbral_er})")
 
             if df_campo is not None:
@@ -815,7 +811,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
                 else:
                     st.info(f"⏳ **En Progreso:** Aún no se han acumulado los {dga_optimo} °Cd requeridos para el control.")
             else:
-                st.warning(f"⏳ Esperando primera alerta (Tasa media 7d >= {umbral_er}).")
+                st.warning(f"⏳ Esperando primera alerta (Tasa media >= {umbral_er}).")
 
         with col_gauge:
             max_axis = dga_critico * 1.2
