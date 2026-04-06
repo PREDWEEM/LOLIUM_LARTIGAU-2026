@@ -2,7 +2,6 @@
 # ===============================================================
 # 🌾 PREDWEEM INTEGRAL vK4.9.8 — LOLIUM LARTIGAU 2026
 # Actualización:
-# - ÁREA DE EMERGENCIA CONTINUA: Integración de picos diarios en ventana semanal.
 # - Pearson por intervalos de monitoreo
 # - Emparejamiento por Proximidad con Regla Anti-Cruce
 # - CORRECCIÓN DEFINITIVA: Eliminación total de réplicas (Ecos) en cadena.
@@ -124,6 +123,7 @@ def calculate_tt_scalar(t, t_base, t_opt, t_crit):
         return 0.0
 
 def calcular_et0_hargreaves(jday, tmax, tmin, latitud=-38.45):
+    # Latitud por defecto centrada en Lartigau
     lat_rad = np.radians(latitud)
     dr = 1 + 0.033 * np.cos(2 * np.pi / 365 * jday)
     dec = 0.409 * np.sin(2 * np.pi / 365 * jday - 1.39)
@@ -139,6 +139,7 @@ def calcular_et0_hargreaves(jday, tmax, tmin, latitud=-38.45):
     et0 = 0.0023 * ra_mm * (tmean + 17.8) * np.sqrt(trange)
     return np.maximum(et0, 0)
 
+# MODIFICACIÓN: Secado dinámico con factor Kr
 def balance_hidrico_superficial(prec, et0, w_max=20.0, ke_suelo_max=0.4):
     n = len(prec)
     w = np.zeros(n)
@@ -164,6 +165,7 @@ class PracticalANNModel:
 
     def predict(self, Xreal):
         Xn = self.normalize(Xreal)
+        # Vectorización matricial
         z1 = Xn @ self.IW + self.bIW
         a1 = np.tanh(z1)
         z2 = (a1 @ self.LW.T).flatten() + self.bLW
@@ -246,6 +248,7 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
     sim_vals_peaks = sim_vals.copy()
     max_obs_date = pd.to_datetime(obs_dates.max())
     
+    # --- PADDING Y DETECCIÓN SIMULADA ---
     sim_vals_padded = np.pad(sim_vals, (1, 1), 'constant', constant_values=(0, 0))
     peaks_sim_padded, _ = find_peaks(sim_vals_padded, height=umbral_min_pico, distance=1)
     
@@ -253,10 +256,12 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
     peaks_sim = peaks_sim[(peaks_sim >= 0) & (peaks_sim < len(sim_vals))]
     sim_peak_dates = pd.to_datetime(sim_dates[peaks_sim])
     
+    # --- DETECCIÓN AGRONÓMICA OBSERVADA ---
     min_h_obs = np.max(obs_vals) * 0.05 if np.max(obs_vals) > 0 else 0.01
     peaks_obs = np.where(obs_vals >= min_h_obs)[0]
     obs_peak_dates = pd.to_datetime(obs_dates[peaks_obs])
     
+    # --- FILTRO DE PICOS SIMULADOS CONTIGUOS ---
     ventana_contigua = min_dist_picos 
     skip_indices = set()
 
@@ -289,6 +294,7 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
 
             for idx in grupo_contiguos:
                 if idx != mejor_idx:
+                    # Evitar que el filtro elimine el pico secundario si hay un valor de campo justo en el medio
                     es_flanqueante = False
                     for obs_date in obs_peak_dates:
                         d_idx = sim_peak_dates[idx]
@@ -302,6 +308,7 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
                     
         i = j
 
+    # --- APLANAMIENTO COMPLETO DE ECOS ---
     zeroed_indices = []
     umbral_base = 0.05 
 
@@ -327,6 +334,7 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
     for z_idx in zeroed_indices:
         sim_vals_peaks[z_idx] = 0.0
 
+    # --- BEST-MATCH-FIRST POR PROXIMIDAD PURA + ANTI-CRUCE CRONOLÓGICO ---
     valid_pairs = []
     for i, sim_date in enumerate(sim_peak_dates):
         if i in skip_indices:
@@ -349,6 +357,7 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
     matched_links = []
     offsets = []
     
+    # 1. Emparejamiento 1 a 1 Clásico
     for sim_idx, obs_idx, diff, cost in valid_pairs:
         if obs_idx not in matched_obs:
             crossing = False
@@ -365,6 +374,7 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
                     matched_links.append((sim_idx, obs_idx))
                     offsets.append(diff)
                     
+    # 2. Integración de Picos Gemelos (Misma Cohorte TP)
     for i in range(len(sim_peak_dates)):
         if i not in matched_sim and i not in skip_indices:
             sim_date_i = sim_peak_dates[i]
@@ -389,6 +399,7 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
                             matched_sim.add(i)
                             break
             
+    # --- FILTRO DE INDULTO PARA FALSOS POSITIVOS ---
     for i in range(len(sim_peak_dates)):
         if i not in matched_sim and i not in skip_indices:
             if sim_peak_dates[i] <= max_obs_date:
@@ -411,6 +422,7 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
                 if es_error_real:
                     fp_points.append((sim_peak_dates[i], sim_vals_peaks[peaks_sim[i]]))
             
+    # Asignación de Falsos Negativos y Verdaderos Negativos
     for j in range(len(obs_peak_dates)):
         if j not in matched_obs:
             obs_idx = peaks_obs[j]
@@ -481,7 +493,7 @@ umbral_termoinhibicion = st.sidebar.number_input(
 
 umbral_choque_hidrico = st.sidebar.slider(
     "Choque Hídrico 3 días (mm)", 
-    min_value=20.0, max_value=100.0, value=45.0,
+    min_value=20.0, max_value=100.0, value=45.0, 
     help="Desbloquea la emergencia temprana si se acumula esta lluvia antes de fines de abril."
 )
 
@@ -493,21 +505,21 @@ with col_t1:
 with col_t2:
     t_opt_max = st.number_input("T Óptima Max", value=20.0, step=1.0)
 
-t_critica = st.sidebar.slider("T Crítica (Stop)", 26.0, 42.0, 33.0)
+t_critica = st.sidebar.slider("T Crítica (Stop)", 26.0, 42.0, 30.0)
 
 st.sidebar.markdown("**Objetivos (°Cd)**")
 dga_optimo = st.sidebar.number_input("TT Control Post-emergente (°Cd)", value=600, step=10)
 dga_critico = st.sidebar.number_input("Límite Ventana (°Cd)", value=800, step=10)
 
 st.sidebar.markdown("## 🧪 3. Validación")
-max_desfase_validacion = st.sidebar.slider("Desfase admisible Pearson (días)", 0, 15, 12)
+max_desfase_validacion = st.sidebar.slider("Desfase admisible Pearson (días)", 0, 10, 10)
 
 st.sidebar.markdown("**Tolerancia Cohortes (Días)**")
 col_v1, col_v2 = st.sidebar.columns(2)
 with col_v1:
     tol_anticipo = st.number_input("Anticipo (+)", value=7, step=1)
 with col_v2:
-    tol_retraso = st.number_input("Retraso (-)", value=10, step=1)
+    tol_retraso = st.number_input("Retraso (-)", value=7, step=1) 
 
 col_p1, col_p2 = st.sidebar.columns(2)
 with col_p1:
@@ -528,9 +540,10 @@ tipo_manejo = st.sidebar.selectbox(
         "Cobertura Media (SD - Rastrojo Soja)",
         "Baja Cobertura / Labranza Convencional"
     ],
-    index=0 
+    index=1 
 )
 
+# Lógica de cobertura ampliada
 if "Muy Densa" in tipo_manejo:
     ke_val = 0.10      
     mod_termico = 0.80 
@@ -589,45 +602,37 @@ if df_meteo_raw is not None and modelo_ann is not None:
     emerrel_raw, _ = modelo_ann.predict(X)
     df["EMERREL"] = np.maximum(emerrel_raw, 0.0)
 
+    # --- BYPASS AGRONÓMICO: RUPTURA DE DORMICIÓN TEMPRANA ---
+    limite_juliano_temprano = 110 # Aprox. 20 de Abril
+    df["Prec_3d"] = df["Prec"].rolling(window=3, min_periods=1).sum()
+    mask_ruptura = (df["Julian_days"] <= limite_juliano_temprano) & (df["Prec_3d"] >= umbral_choque_hidrico)
+    df.loc[mask_ruptura, "EMERREL"] = np.maximum(df.loc[mask_ruptura, "EMERREL"], 0.75) 
+
     # ---------------------------------------------------------
     # MÓDULO HÍDRICO SUPERFICIAL Y TÉRMICO
     # ---------------------------------------------------------
+    # Nota: ET0 usa las temperaturas del aire porque es demanda atmosférica.
     df["ET0"] = calcular_et0_hargreaves(df["Julian_days"].values, df["TMAX"].values, df["TMIN"].values, latitud=-38.45)
     
+    # Aplicación del BHS con Kr Dinámico
     df["W_superficial"] = balance_hidrico_superficial(df["Prec"].values, df["ET0"].values, w_max=w_max_val, ke_suelo_max=ke_val)
     
     humedad_relativa = df["W_superficial"] / w_max_val
     df["Hydric_Factor"] = 1 / (1 + np.exp(-10 * (humedad_relativa - 0.3)))
     df["EMERREL"] = df["EMERREL"] * df["Hydric_Factor"]
 
+    # CORTE HÍDRICO ESTRICTO
     df.loc[humedad_relativa < 0.20, "EMERREL"] = 0.0
 
+    # TRIGGER DE RECARGA INICIAL (Lluvia puntual)
     df['Lluvia_Recarga'] = (df['Prec'] >= w_max_val).cummax()
     df.loc[~df['Lluvia_Recarga'], "EMERREL"] = 0.0
 
-    limite_juliano_temprano = 110 # Aprox. 20 de Abril
-    df["Prec_3d"] = df["Prec"].rolling(window=3, min_periods=1).sum()
-    mask_ruptura = (df["Julian_days"] <= limite_juliano_temprano) & (df["Prec_3d"] >= umbral_choque_hidrico)
-    df.loc[mask_ruptura, "EMERREL"] = np.maximum(df.loc[mask_ruptura, "EMERREL"], 0.75) 
-
+    # ESCUDO TERMOFISIOLÓGICO DINÁMICO (Bloqueo Estival por T media 10d - del aire)
     df["Tmedia"] = df["Tmedia_aire"]
     df["Tmedia_10d"] = df["Tmedia"].rolling(window=10, min_periods=1).mean()
     mask_inhibicion = df["Tmedia_10d"] >= umbral_termoinhibicion
     df.loc[mask_inhibicion, "EMERREL"] = 0.0
-
-    # =========================================================================
-    # NUEVO: ÁREA DE EMERGENCIA CONTINUA (VENTANA SEMANAL)
-    # Transforma los picos diarios en un área continua de 7 días
-    # permitiendo que la simulación se empareje a la estructura de monitoreo semanal.
-    # =========================================================================
-    emerrel_original = df["EMERREL"].copy()
-    
-    # 1. Se genera un puente suavizado para unir picos que estén dentro de la misma semana
-    base_suavizada = df["EMERREL"].rolling(window=7, min_periods=1).mean()
-    
-    # 2. Se superpone el valor máximo para formar el área sin perder la altura original de los picos
-    df["EMERREL"] = np.maximum(emerrel_original, base_suavizada)
-    # =========================================================================
 
     df["DG"] = df["Tmedia"].apply(lambda x: calculate_tt_scalar(x, t_base_val, t_opt_max, t_critica))
 
@@ -675,6 +680,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
         
         cohort_metrics = evaluate_cohort_detection(df, df_campo, col_fecha, col_plm2, tol_anticipo, tol_retraso, min_dist_picos, umbral_pico_sim)
 
+        # ELIMINACIÓN VISUAL: Borramos toda la montaña del pico falso de la gráfica principal
         if cohort_metrics.get("zeroed_indices"):
             df.loc[cohort_metrics["zeroed_indices"], "EMERREL"] = 0.0
 
@@ -713,7 +719,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
     colorscale_hard = [[0.0, "green"], [0.29, "green"], [0.30, "red"], [1.0, "red"]]
 
     fig_risk = go.Figure(data=go.Heatmap(z=[df["EMERREL"].values], x=df["Fecha"], y=["Emergencia"], colorscale=colorscale_hard, zmin=0, zmax=1, showscale=False))
-    fig_risk.update_layout(height=120, margin=dict(t=30, b=0, l=10, r=10), title="Mapa de Riesgo (Área de Emergencia Continua)")
+    fig_risk.update_layout(height=120, margin=dict(t=30, b=0, l=10, r=10), title="Mapa de Riesgo (Tasa Diaria)")
     st.plotly_chart(fig_risk, use_container_width=True)
 
     tab1, tab2, tab3, tab4 = st.tabs(["📊 MONITOR DE DECISIÓN", "💧 PRECIPITACIONES Y SUELO", "📈 ANÁLISIS ESTRATÉGICO", "🧪 BIO-CALIBRACIÓN"])
@@ -751,7 +757,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
 
         with col_main:
             fig_emer = go.Figure()
-            fig_emer.add_trace(go.Scatter(x=df["Fecha"], y=df["EMERREL"], mode='lines', name='Tasa Simulada', line=dict(color='#166534', width=2.5), fill='tozeroy', fillcolor='rgba(22, 101, 52, 0.1)'))
+            fig_emer.add_trace(go.Scatter(x=df["Fecha"], y=df["EMERREL"], mode='lines', name='Tasa Diaria Simulada', line=dict(color='#166534', width=2.5), fill='tozeroy', fillcolor='rgba(22, 101, 52, 0.1)'))
             fig_emer.add_hline(y=umbral_er, line_dash="dash", line_color="orange", annotation_text=f"Umbral Alerta ({umbral_er})")
 
             if df_campo is not None:
