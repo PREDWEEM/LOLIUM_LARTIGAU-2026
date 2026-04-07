@@ -6,6 +6,7 @@
 #   * Reemplazo de flujos diarios por INTEGRACIÓN EN INTERVALOS DE CAMPO.
 #   * Agregado de métricas robustas: RMSE de trayectoria y CCC (Concordancia).
 #   * Eliminación del sistema de 'Shifts' empíricos.
+# - NUEVO GRÁFICO: "Llenado de la Caja" (Curvas Acumuladas) + Dispersión 1:1.
 # - CORRECCIÓN DEFINITIVA: Eliminación total de réplicas (Ecos) en cadena.
 # - SELECCIÓN DE PICO: Se prioriza el más cercano al dato de campo.
 # - NUEVO MATCH N-A-1: Observaciones de la "rampa de subida" pueden emparejarse al mismo pico simulado.
@@ -823,6 +824,81 @@ if df_meteo_raw is not None and modelo_ann is not None:
             fig_gauge.add_annotation(x=0.5, y=-0.1, text=f"{msg_estado}<br>Pronóstico +7d: <b>{dga_7dias:.1f} °Cd</b>", showarrow=False, font=dict(size=14, color="#1e3a8a"), align="center")
             fig_gauge.update_layout(height=350, margin=dict(t=80, b=50, l=30, r=30))
             st.plotly_chart(fig_gauge, use_container_width=True)
+
+        # -----------------------------------------------------
+        # NUEVOS GRÁFICOS: CURVAS ACUMULADAS Y DISPERSIÓN 1:1
+        # -----------------------------------------------------
+        if df_campo is not None and 'df_sincronizado' in locals():
+            st.markdown("---")
+            st.markdown("<p class='metric-header' style='margin-top:20px;'>📈 VALIDACIÓN DE TRAYECTORIA Y PRECISIÓN</p>", unsafe_allow_html=True)
+            
+            # Crear dos columnas para mostrar ambos gráficos a la par
+            col_curva, col_disp = st.columns([2, 1])
+            
+            with col_curva:
+                fig_acum = go.Figure()
+                
+                # Curva Real de Campo
+                fig_acum.add_trace(go.Scatter(
+                    x=df_sincronizado[col_fecha], 
+                    y=df_sincronizado['Campo_Acumulado'] * 100, 
+                    mode='markers+lines', 
+                    name='Real a Campo (%)', 
+                    marker=dict(color='#dc2626', size=10, symbol='diamond'),
+                    line=dict(color='#dc2626', width=2)
+                ))
+                
+                # Curva Simulada por el Modelo
+                fig_acum.add_trace(go.Scatter(
+                    x=df_sincronizado[col_fecha], 
+                    y=df_sincronizado['Sim_Acumulado'] * 100, 
+                    mode='lines', 
+                    name='Simulado Modelo (%)', 
+                    line=dict(color='#166534', width=3, dash='dash')
+                ))
+
+                fig_acum.update_layout(
+                    title="Dinámica de Llenado (Curvas Acumuladas)",
+                    xaxis_title="Fechas de Monitoreo",
+                    yaxis_title="Emergencia Acumulada (%)",
+                    height=400,
+                    hovermode="x unified",
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                )
+                st.plotly_chart(fig_acum, use_container_width=True)
+
+            with col_disp:
+                fig_1to1 = go.Figure()
+                
+                # Línea 1:1 (Concordancia Perfecta)
+                fig_1to1.add_trace(go.Scatter(
+                    x=[0, 100], y=[0, 100], 
+                    mode='lines', 
+                    name='Modelo Perfecto', 
+                    line=dict(color='gray', dash='dash', width=2)
+                ))
+                
+                # Puntos reales vs simulados
+                fig_1to1.add_trace(go.Scatter(
+                    x=df_sincronizado['Campo_Acumulado'] * 100, 
+                    y=df_sincronizado['Sim_Acumulado'] * 100, 
+                    mode='markers', 
+                    name='Lecturas a Campo', 
+                    marker=dict(color='#2563eb', size=10, line=dict(width=1, color='DarkBlue')),
+                    text=df_sincronizado[col_fecha].dt.strftime('%d-%m-%Y'),
+                    hovertemplate="<b>%{text}</b><br>Campo: %{x:.1f}%<br>Modelo: %{y:.1f}%<extra></extra>"
+                ))
+
+                fig_1to1.update_layout(
+                    title=f"Ajuste 1:1 (CCC: {ccc_acum:.3f})",
+                    xaxis_title="Observado en Campo (%)",
+                    yaxis_title="Simulado por PREDWEEM (%)",
+                    height=400,
+                    xaxis=dict(range=[0, 105]),
+                    yaxis=dict(range=[0, 105]),
+                    showlegend=False
+                )
+                st.plotly_chart(fig_1to1, use_container_width=True)
 
     with tab2:
         st.header("💧 Dinámica Hídrica del Suelo (Balance Superficial)")
