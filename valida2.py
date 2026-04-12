@@ -18,7 +18,7 @@
 # - NUEVO: Escudo Termofisiológico Dinámico (Media Móvil 10d) para inhibición estival.
 # - NUEVO: Corte Hídrico Estricto (20% HR) acoplado a la sigmoide.
 # - NUEVO: Bloqueo de emergencia (0%) hasta que una LLUVIA PUNTUAL supere la Capacidad de Campo.
-# - MEJORA: Sensibilidad térmica e hídrica agresiva según nivel de rastrojo.
+# - MEJORA: Sensibilidad térmica e hídrica agresiva según nivel de rastrojo (slider continuo).
 # ===============================================================
 
 import streamlit as st
@@ -27,18 +27,27 @@ import pandas as pd
 import plotly.graph_objects as go
 import pickle
 import io
+import time
+import base64
 from datetime import timedelta
 from pathlib import Path
 from scipy.signal import find_peaks
 
 # ---------------------------------------------------------
-# 1. CONFIGURACIÓN DE PÁGINA Y ESTILO
+# 1. PANTALLA DE CARGA ULTRARRÁPIDA Y ESTILO
 # ---------------------------------------------------------
-st.set_page_config(
-    page_title="PREDWEEM LARTIGAU vK4.9.8",
-    layout="wide",
-    page_icon="🌾"
-)
+if 'arranque_fase' not in st.session_state:
+    st.set_page_config(page_title="PREDWEEM LARTIGAU", layout="wide", page_icon="🌾")
+    st.markdown("<br><br><br>", unsafe_allow_html=True)
+    st.info("🚜 **Iniciando Servidor PREDWEEM Integral...** Cargando módulos de validación.")
+    st.progress(20)
+    
+    st.session_state.arranque_fase = 1
+    time.sleep(0.1)
+    st.rerun()
+
+if 'arranque_fase' in st.session_state and st.session_state.arranque_fase == 1:
+    st.session_state.arranque_fase = 2 
 
 st.markdown("""
 <style>
@@ -70,10 +79,34 @@ st.markdown("""
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
+    
+    div[data-testid="stVerticalBlockBorderWrapper"], 
+    div[data-testid="stContainerBorder"],
+    div[data-testid="stContainer"] > div > div[style*="border"],
+    div[data-testid="stVerticalBlock"] > div[style*="border-radius"] {
+        background-color: #ffffff !important;
+        border-radius: 12px !important;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06) !important;
+        padding: 15px !important;
+        border: 1px solid #e2e8f0 !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 BASE = Path(__file__).parent if "__file__" in globals() else Path.cwd()
+
+def set_bg_hack(main_bg_file):
+    try:
+        with open(main_bg_file, "rb") as image_file:
+            encoded_string = base64.b64encode(image_file.read()).decode()
+        st.markdown(
+            f"""<style>.stApp {{ background-image: url(data:image/png;base64,{encoded_string}); background-size: cover; background-position: center; background-repeat: no-repeat; background-attachment: fixed; }}</style>""",
+            unsafe_allow_html=True
+        )
+    except FileNotFoundError:
+        pass
+
+set_bg_hack("fondo_predweem_v3.png") 
 
 # ---------------------------------------------------------
 # 2. ROBUSTEZ Y ARCHIVOS (MOCKS)
@@ -195,7 +228,12 @@ def load_data(file_uploader, default_name):
         return pd.read_csv(BASE / f"{default_name}.csv")
     elif (BASE / f"{default_name}.xlsx").exists():
         return pd.read_excel(BASE / f"{default_name}.xlsx")
-    return None
+    
+    github_url = f"https://raw.githubusercontent.com/PREDWEEM/LOLIUM_LARTIGAU-2026/main/{default_name}.csv"
+    try:
+        return pd.read_csv(github_url)
+    except:
+        return None
 
 # --- NUEVAS FUNCIONES DE INTEGRACIÓN DE INTERVALOS ---
 def sincronizar_series_por_intervalos(df_sim, df_campo, col_fecha, col_plm2):
@@ -479,17 +517,66 @@ def evaluate_cohort_detection(df_sim, df_campo, col_fecha, col_plm2, tol_anticip
 # ---------------------------------------------------------
 modelo_ann, cluster_model = load_models()
 
-st.sidebar.image(
-    "https://raw.githubusercontent.com/PREDWEEM/LOLIUM_LARTIGAU-2026/main/logo.png",
-    use_container_width=True
-)
-st.sidebar.markdown("## 📂 1. Datos del Lote")
-archivo_meteo = st.sidebar.file_uploader("1. Clima (Lartigau)", type=["xlsx", "csv"])
-archivo_campo = st.sidebar.file_uploader("2. Campo (Validación Lartigau)", type=["xlsx", "csv"])
+# --- HEADER PRINCIPAL ---
+st.title("🌾 PREDWEEM LOLIUM - LARTIGAU (BA) lat=-38.6166 lon=-61.7")
 
-st.sidebar.divider()
+# --- MENÚ DESPLEGABLE: DATOS DEL LOTE (MAIN PAGE) ---
+with st.expander("📂 1. Datos del Lote", expanded=True):
+    col_upload, col_rastrojo = st.columns(2)
+    
+    with col_upload:
+        archivo_meteo = st.file_uploader("1. Clima (Lartigau)", type=["xlsx", "csv"])
+        archivo_campo = st.file_uploader("2. Campo (Validación Lartigau)", type=["xlsx", "csv"])
+        
+    with col_rastrojo:
+        with st.container(border=True):
+            st.markdown("#### 🌾 Manejo de Superficie") 
+            
+            cobertura_pct = st.slider(
+                "Cobertura de Rastrojo en Suelo (%)",
+                min_value=0, max_value=100, value=95, step=5,
+                help="0% = Suelo desnudo / Labranza convencional. 100% = Cobertura total (Ej. Cultivo de Servicio denso)."
+            )
+
+            x_cobertura = [0, 30, 70, 100] 
+            y_ke = [0.95, 0.50, 0.25, 0.10]
+            ke_val = float(np.interp(cobertura_pct, x_cobertura, y_ke))
+            
+            y_mod_termico = [1.00, 0.95, 0.90, 0.80]
+            mod_termico = float(np.interp(cobertura_pct, x_cobertura, y_mod_termico))
+            
+            html_card = f"""
+            <div style="
+                background-color: #ffffff;
+                padding: 15px 20px;
+                border-radius: 10px;
+                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+                border: 1px solid #e2e8f0;
+                margin-top: 15px;
+            ">
+                <h5 style="color: #1e293b; margin-top: 0; margin-bottom: 12px; font-size: 0.95rem;">
+                    Parámetros Dinámicos Aplicados
+                </h5>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <span style="color: #475569; font-size: 0.9rem;">Coeficiente Hídrico Suelo (Ke):</span>
+                    <span style="color: #0284c7; font-weight: bold; font-size: 1.05rem;">{ke_val:.2f}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="color: #475569; font-size: 0.9rem;">Modulador Térmico Suelo:</span>
+                    <span style="color: #b91c1c; font-weight: bold; font-size: 1.05rem;">{mod_termico:.2f}</span>
+                </div>
+            </div>
+            """
+            st.markdown(html_card, unsafe_allow_html=True)
+
+
+# --- SIDEBAR ---
+LOGO_URL = "https://raw.githubusercontent.com/PREDWEEM/LOLIUM_LARTIGAU-2026/main/logo.png"
+st.sidebar.image(LOGO_URL, use_container_width=True)
+
 st.sidebar.markdown("## ⚙️ 2. Fisiología y Logística")
-umbral_er = st.sidebar.slider("Umbral Alerta Temprana", 0.05, 0.80, 0.50)
+
+umbral_er = st.sidebar.slider("Umbral Tasa Diaria (Detección pico)", 0.05, 0.80, 0.50)
 
 st.sidebar.markdown("**Ruptura de Dormición Estival (Escudo)**")
 umbral_termoinhibicion = st.sidebar.number_input(
@@ -515,8 +602,8 @@ with col_t2:
 t_critica = st.sidebar.slider("T Crítica (Stop)", 26.0, 42.0, 30.0)
 
 st.sidebar.markdown("**Objetivos (°Cd)**")
-dga_optimo = st.sidebar.number_input("TT Control Post-emergente (°Cd)", value=600, step=10)
-dga_critico = st.sidebar.number_input("Límite Ventana (°Cd)", value=800, step=10)
+dga_optimo = st.sidebar.number_input("Objetivo Control", value=600, step=50)
+dga_critico = st.sidebar.number_input("Límite Ventana", value=800, step=50)
 
 st.sidebar.markdown("## 🧪 3. Validación")
 st.sidebar.markdown("**Tolerancia Cohortes (Días)**")
@@ -532,40 +619,12 @@ with col_p1:
 with col_p2:
     umbral_pico_sim = st.number_input("Umbral Mín. Pico Simulado", value=0.20, step=0.05)
 
+
 st.sidebar.divider()
 st.sidebar.markdown("## 💧 4. Balance Hídrico (Suelo)")
 w_max_val = st.sidebar.number_input("Cap. de Campo Superficial (mm)", value=20.0, step=1.0)
 
-st.sidebar.markdown("**Manejo del Lote (Cobertura)**")
-tipo_manejo = st.sidebar.selectbox(
-    "Nivel de Rastrojo",
-    options=[
-        "Cobertura Muy Densa (SD - Extra Rastrojo/Cultivos de Servicio)",
-        "Alta Cobertura (SD - Rastrojo Trigo/Maíz)",
-        "Cobertura Media (SD - Rastrojo Soja)",
-        "Baja Cobertura / Labranza Convencional"
-    ],
-    index=1 
-)
-
-# Lógica de cobertura ampliada
-if "Muy Densa" in tipo_manejo:
-    ke_val = 0.10      
-    mod_termico = 0.80 
-elif "Alta" in tipo_manejo:
-    ke_val = 0.25      
-    mod_termico = 0.90 
-elif "Media" in tipo_manejo:
-    ke_val = 0.50      
-    mod_termico = 0.95 
-else:
-    ke_val = 0.95      
-    mod_termico = 1.00 
-
-st.sidebar.caption(f"Coeficiente Ke interno aplicado: **{ke_val:.2f}**")
-st.sidebar.caption(f"Modulador Térmico Suelo: **{mod_termico:.2f}**")
-
-df_meteo_raw = load_data(archivo_meteo, "LARTIGAU")
+df_meteo_raw = load_data(archivo_meteo, "meteo_daily")
 df_campo_raw = load_data(archivo_campo, "LARTIGAU_campo")
 
 # ---------------------------------------------------------
@@ -735,7 +794,6 @@ if df_meteo_raw is not None and modelo_ann is not None:
     # -----------------------------------------------------
     # VISUALIZACIÓN FRONT-END
     # -----------------------------------------------------
-    st.title("🌾 PREDWEEM LOLIUM - LARTIGAU 2026")
 
     colorscale_hard = [[0.0, "green"], [0.01, "green"], [0.02, "red"], [1.0, "red"]]
 
