@@ -3,6 +3,7 @@
 # 🌾 PREDWEEM OPERATIVO vK4.9.8 — LOLIUM LARTIGAU 2026
 # Actualización:
 # - UI: "Datos del Lote" movido a st.expander en la página principal.
+# - ADAPTACIÓN LARTIGAU: Coordenadas ajustadas estrictamente a -38.6166.
 # - UNIFICACIÓN MECANÍSTICA 100%: 
 #   * Eliminado el forzado empírico de 20 mm.
 #   * Eliminada la restricción histórica de 21 días / 50 mm para enero.
@@ -11,11 +12,12 @@
 # - NUEVO: Corte Hídrico Estricto (20% HR) acoplado a la sigmoide.
 # - NUEVO: Bloqueo de emergencia (0%) hasta que una LLUVIA PUNTUAL supere la Capacidad de Campo.
 # - NUEVO: Secado exponencial del suelo (Ke Dinámico / Factor Kr) en BHS.
-# - Evapotranspiración (ET0) mediante Hargreaves-Samani (Lat ajustada a Lartigau: -38.45)
+# - Evapotranspiración (ET0) mediante Hargreaves-Samani (Latitud ajustada: -38.6166)
 # - MEJORA: Sensibilidad térmica e hídrica agresiva según nivel de rastrojo (slider continuo).
 # - Gráfico dinámico de retención de agua en suelo vs Lluvias
 # - AJUSTE: Umbral de alerta por defecto y salto visual calibrado en 0.30.
 # - OPTIMIZACIÓN: Vectorización matricial pura en PracticalANNModel.predict.
+# - VISUALIZACIÓN LOGARÍTMICA: Transformación analítica log10(x + 0.01) para la dinámica de picos.
 # ===============================================================
 
 import streamlit as st
@@ -168,8 +170,8 @@ def calculate_tt_scalar(t, t_base, t_opt, t_crit):
     else:
         return 0.0
 
-def calcular_et0_hargreaves(jday, tmax, tmin, latitud=-38.45):
-    # Latitud ajustada a Lartigau (-38.45 aprox)
+def calcular_et0_hargreaves(jday, tmax, tmin, latitud=-38.6166):
+    # Latitud ajustada a Lartigau (-38.6166)
     lat_rad = np.radians(latitud)
     dr = 1 + 0.033 * np.cos(2 * np.pi / 365 * jday)
     dec = 0.409 * np.sin(2 * np.pi / 365 * jday - 1.39)
@@ -387,9 +389,9 @@ if df is not None and modelo_ann is not None:
     df.loc[mask_ruptura, "EMERREL"] = np.maximum(df.loc[mask_ruptura, "EMERREL"], 0.75)
 
     # --- C. RESTRICCIÓN HÍDRICA Y TÉRMICA (MÓDULO MECANÍSTICO BHS) ---
-    # 1. Calculamos la Evapotranspiración (ET0) - Latitud Lartigau (-38.45)
+    # 1. Calculamos la Evapotranspiración (ET0) - Latitud Lartigau (-38.6166)
     # Nota: Se usan las T del aire, ya que ET0 es una demanda atmosférica
-    df["ET0"] = calcular_et0_hargreaves(df["Julian_days"].values, df["TMAX"].values, df["TMIN"].values, latitud=-38.45)
+    df["ET0"] = calcular_et0_hargreaves(df["Julian_days"].values, df["TMAX"].values, df["TMIN"].values, latitud=-38.6166)
     
     # 2. Ejecutamos el Balance Hídrico Superficial (Actualizado con Ke Dinámico)
     df["W_superficial"] = balance_hidrico_superficial(df["Prec"].values, df["ET0"].values, w_max=w_max_val, ke_suelo_max=ke_val)
@@ -447,6 +449,13 @@ if df is not None and modelo_ann is not None:
         dias_stress = len(df_desde_pico[df_desde_pico["Tmedia"] > t_opt_max])
     
     # -----------------------------------------------------
+    # TRANSFORMACIÓN LOGARÍTMICA (Opción 2 Analítica)
+    # -----------------------------------------------------
+    c_log = 0.01
+    df["EMERREL_LOG"] = np.log10(df["EMERREL"] + c_log)
+    umbral_er_log = np.log10(umbral_er + c_log)
+
+    # -----------------------------------------------------
     # VISUALIZACIÓN FRONT-END
     # -----------------------------------------------------
     # AJUSTADO: Escala de colores personalizada para disparar el rojo en el nuevo umbral (0.30)
@@ -473,12 +482,21 @@ if df is not None and modelo_ann is not None:
 
         with col_main:
             fig_emer = go.Figure()
+            # Usando la variable LOG en lugar de EMERREL normal
             fig_emer.add_trace(go.Scatter(
-                x=df["Fecha"], y=df["EMERREL"], mode='lines', name='Tasa Diaria Simulada',
+                x=df["Fecha"], y=df["EMERREL_LOG"], mode='lines', name='Tasa Diaria Sim. (Log)',
                 line=dict(color='#166534', width=2.5), fill='tozeroy', fillcolor='rgba(22, 101, 52, 0.1)'
             ))
-            fig_emer.add_hline(y=umbral_er, line_dash="dash", line_color="orange", annotation_text=f"Umbral Alerta ({umbral_er})")
-            fig_emer.update_layout(title="Dinámica de Emergencia y Detección de Picos", height=350, hovermode="x unified")
+            # Ajustando la línea horizontal para que coincida con la escala LOG
+            fig_emer.add_hline(y=umbral_er_log, line_dash="dash", line_color="orange", annotation_text=f"Umbral Alerta ({umbral_er})")
+            
+            # Etiquetado del eje Y aclarando la transformación
+            fig_emer.update_layout(
+                title="Dinámica de Emergencia y Detección de Picos (Escala Log Analítica)", 
+                yaxis_title="Log10(Emergencia + 0.01)",
+                height=350, 
+                hovermode="x unified"
+            )
             st.plotly_chart(fig_emer, use_container_width=True)
 
             if fecha_inicio_ventana:
@@ -606,7 +624,7 @@ if df is not None and modelo_ann is not None:
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Data_Diaria')
         pd.DataFrame({'Configuracion': ['T_Base', 'T_Optima', 'T_Critica', 'W_Max', 'Ke', 'Mod_Termico', 'Umbral_Termoinhibicion'], 'Valor': [t_base_val, t_opt_max, t_critica, w_max_val, ke_val, mod_termico, umbral_termoinhibicion]}).to_excel(writer, sheet_name='Bio_Params', index=False)
-    st.sidebar.download_button("📥 Descargar Reporte", output.getvalue(), "PREDWEEM_Operativo_Lartigau_vK4_9_8.xlsx")
+    st.sidebar.download_button("📥 Descargar Reporte", output.getvalue(), "PREDWEEM_Operativo_Lartigau_vK4_9_8_LOG.xlsx")
 
 else:
     st.info("👋 Bienvenido a PREDWEEM. Cargue datos meteorológicos para comenzar.")
