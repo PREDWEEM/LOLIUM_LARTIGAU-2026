@@ -374,10 +374,6 @@ if df_meteo_raw is not None and modelo_ann is not None:
     df.loc[df["Tmedia_10d"] >= umbral_termoinhibicion, "EMERREL"] = 0.0
 
 
-    # Escudo Termofisiológico
-    df["Tmedia"] = df["Tmedia_aire"]
-    df["Tmedia_10d"] = df["Tmedia"].rolling(window=10, min_periods=1).mean()
-    df.loc[df["Tmedia_10d"] >= umbral_termoinhibicion, "EMERREL"] = 0.0
 
     # ===============================================================
     # NUEVO: AGOTAMIENTO DINÁMICO DEL BANCO DE SEMILLAS (OPCIÓN 1)
@@ -399,7 +395,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
         df['EMERREL'] = df['EMERREL'] * df['Factor_Agotamiento']
     # ===============================================================
 
-    df["DG"] = df["Tmedia"].apply(lambda x: calculate_tt_scalar(x, t_base_val, t_opt_max, t_critica))
+  
 
     df["DG"] = df["Tmedia"].apply(lambda x: calculate_tt_scalar(x, t_base_val, t_opt_max, t_critica))
 
