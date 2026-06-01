@@ -347,7 +347,7 @@ def optimizar_parametros_hidricos_3d(df_meteo, df_campo, modelo_ann, latitud_lar
 # ---------------------------------------------------------
 modelo_ann, cluster_model = load_models()
 
-st.title("🌾 PREDWEEM by GUILLERMO R. CHANTRE — LARTIGAU (BA) lat=-38.6166 lon=-61.7")
+st.title("🌾 PREDWEEM LOLIUM — LARTIGAU (BA) lat=-38.6166 lon=-61.7")
 
 with st.expander("📂 1. Datos del Lote", expanded=True):
     col_upload, col_rastrojo = st.columns(2)
