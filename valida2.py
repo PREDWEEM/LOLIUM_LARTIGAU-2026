@@ -10,6 +10,8 @@
 # - OPTIMIZADOR 3D: Barrido paramétrico simultáneo de W_Max, Ke y Ventana de Validación.
 # - UX VISUAL: Incorporación de la "Unidad de Decisión Agronómica" como 
 #   sombreado de fondo en el gráfico principal de dinámica.
+# - NUEVO: Sombreado de Ventana de Aplicación (600 - 800 °Cd) y línea límite.
+# - NUEVO (VALIDACIÓN): Gráfico 1:1 de Emergencia Acumulada (Norm) con RMSE y R2.
 # ===============================================================
 
 import streamlit as st
@@ -267,13 +269,19 @@ def calcular_metricas_validacion_integral(df_sync):
     
     denominador_ccc = var_obs_ac + var_sim_ac + (mean_obs_ac - mean_sim_ac)**2
     ccc_acumulado = (2 * covar_ac) / denominador_ccc if denominador_ccc > 0 else 0.0
+
+    # NUEVO: Cálculo de R2 para Curva Acumulada
+    ss_res_ac = np.sum((obs_acum - sim_acum)**2)
+    ss_tot_ac = np.sum((obs_acum - mean_obs_ac)**2)
+    r2_acumulado = 1 - (ss_res_ac / ss_tot_ac) if ss_tot_ac > 0 else 0.0
     
     return {
         "Pearson_Flujos": pearson_r, 
         "NSE_Flujos": nse_flujos,
         "KGE_Flujos": kge_flujos,
         "RMSE_Acumulado": rmse_acumulado, 
-        "CCC_Acumulado": ccc_acumulado
+        "CCC_Acumulado": ccc_acumulado,
+        "R2_Acumulado": r2_acumulado
     }
 
 # ---------------------------------------------------------
@@ -331,6 +339,7 @@ def optimizar_parametros_hidricos_3d(df_meteo, df_campo, modelo_ann, latitud_lar
                     "NSE": metricas["NSE_Flujos"],
                     "KGE": metricas["KGE_Flujos"],
                     "CCC": metricas["CCC_Acumulado"],
+                    "R2": metricas["R2_Acumulado"],
                     "RMSE": metricas["RMSE_Acumulado"]
                 })
             
@@ -523,17 +532,24 @@ if df_meteo_raw is not None and modelo_ann is not None:
     if fecha_hoy not in df['Fecha'].values: fecha_hoy = df['Fecha'].max()
     indices_pulso = df.index[df["EMERREL"] >= umbral_er].tolist()
 
+    # --- CÁLCULO DE FECHA DE CONTROL Y FECHA LÍMITE ---
     dga_hoy, dga_7dias = 0.0, 0.0
-    fecha_inicio_ventana, fecha_control = None, None
+    fecha_inicio_ventana, fecha_control, fecha_limite = None, None, None
     msg_estado = "Esperando pico de emergencia..."
 
     if indices_pulso:
         fecha_inicio_ventana = df.loc[indices_pulso[0], "Fecha"]
         df_desde_pico = df[df["Fecha"] >= fecha_inicio_ventana].copy()
         df_desde_pico["DGA_cum"] = df_desde_pico["DG"].cumsum()
-        df_control = df_desde_pico[df_desde_pico["DGA_cum"] >= dga_optimo]
         
+        # Fecha de control (Ej. 600 °Cd)
+        df_control = df_desde_pico[df_desde_pico["DGA_cum"] >= dga_optimo]
         if not df_control.empty: fecha_control = df_control.iloc[0]["Fecha"]
+        
+        # Fecha límite (Ej. 800 °Cd)
+        df_limite = df_desde_pico[df_desde_pico["DGA_cum"] >= dga_critico]
+        if not df_limite.empty: fecha_limite = df_limite.iloc[0]["Fecha"]
+        
         dga_hoy = df.loc[(df["Fecha"] >= fecha_inicio_ventana) & (df["Fecha"] <= fecha_hoy), "DG"].sum()
         idx_hoy = df[df["Fecha"] == fecha_hoy].index[0]
         
@@ -541,7 +557,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
         msg_estado = f"Pico detectado el {fecha_inicio_ventana.strftime('%d/%m')}"
 
     # Métricas Robustas (Con Ventana Flexible)
-    pearson_r, nse_flujos, kge_flujos, rmse_acum, ccc_acum = 0.0, 0.0, 0.0, 0.0, 0.0
+    pearson_r, nse_flujos, kge_flujos, rmse_acum, ccc_acum, r2_acum = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     pec, peak_lag, lead_time, desfase_t50 = 0.0, 0, 0, 0
 
     if df_campo is not None:
@@ -553,6 +569,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
         kge_flujos = metricas_robustas["KGE_Flujos"]
         rmse_acum = metricas_robustas["RMSE_Acumulado"]
         ccc_acum = metricas_robustas["CCC_Acumulado"]
+        r2_acum = metricas_robustas["R2_Acumulado"]
 
         tot_plm2 = df_campo[col_plm2].sum()
         if tot_plm2 > 0:
@@ -614,7 +631,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
         with col_main:
             fig_emer = go.Figure()
             
-            # --- NUEVO: SOMBREADO DE UNIDADES DE DECISIÓN AGRONÓMICA ---
+            # --- SOMBREADO DE UNIDADES DE DECISIÓN AGRONÓMICA ---
             fecha_inicio_grilla = df["Fecha"].min()
             fecha_fin_grilla = df["Fecha"].max()
             fecha_actual = fecha_inicio_grilla
@@ -639,8 +656,23 @@ if df_meteo_raw is not None and modelo_ann is not None:
                 fig_emer.add_trace(go.Scatter(x=df_campo[col_fecha], y=df_campo['Campo_Normalizado_LOG'], mode='markers+lines', name='Recuentos a Campo (Log)', marker=dict(color='#dc2626', size=10, symbol='diamond'), line=dict(color='rgba(220, 38, 38, 0.4)', dash='dot')))
 
             if fecha_control:
+                # Marca de Control
                 fig_emer.add_vline(x=fecha_control.timestamp() * 1000, line_dash="dot", line_color="red", line_width=3, annotation_text=f"Control ({dga_optimo}°Cd)", annotation_position="top left", annotation_font=dict(color="red", size=12))
+                
+                # Sombreado de protección
                 fig_emer.add_vrect(x0=fecha_control.timestamp() * 1000, x1=(fecha_control + timedelta(days=residualidad)).timestamp() * 1000, fillcolor="blue", opacity=0.1, layer="below", line_width=0, annotation_text=f"Protección ({residualidad}d)", annotation_position="top left")
+
+                # --- MARCA LÍMITE Y SOMBREADO DE VENTANA DE APLICACIÓN ---
+                if fecha_limite:
+                    fig_emer.add_vline(x=fecha_limite.timestamp() * 1000, line_dash="dot", line_color="orange", line_width=3, annotation_text=f"Límite ({dga_critico}°Cd)", annotation_position="top right", annotation_font=dict(color="orange", size=12))
+                    
+                    fig_emer.add_vrect(
+                        x0=fecha_control.timestamp() * 1000, 
+                        x1=fecha_limite.timestamp() * 1000, 
+                        fillcolor="rgba(255, 165, 0, 0.2)", # Naranja suave
+                        layer="below", line_width=0,
+                        annotation_text="Ventana de Aplicación", annotation_position="top left"
+                    )
 
             titulo_grafico = f"Dinámica de Emergencia y Momento Crítico (Unidad Decisión: {ventana_agrupacion} días)"
             fig_emer.update_layout(title=titulo_grafico, yaxis_title="Log10(Emergencia + 0.01)", height=450, hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
@@ -665,24 +697,47 @@ if df_meteo_raw is not None and modelo_ann is not None:
                 fig_acum = go.Figure()
                 fig_acum.add_trace(go.Scatter(x=df_sincronizado['Fecha'], y=df_sincronizado['Campo_Acumulado'] * 100, mode='markers+lines', name='Real a Campo (%)', marker=dict(color='#dc2626', size=8, symbol='diamond'), line=dict(color='#dc2626', width=2)))
                 fig_acum.add_trace(go.Scatter(x=df_sincronizado['Fecha'], y=df_sincronizado['Sim_Acumulado'] * 100, mode='lines', name='Simulado Modelo (%)', line=dict(color='#166534', width=3, dash='dash')))
-                st.plotly_chart(fig_acum.update_layout(title="Dinámica de Llenado (Curvas Acumuladas)", xaxis_title="Fechas", yaxis_title="Emergencia Acumulada (%)", height=400, hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)), use_container_width=True)
+                st.plotly_chart(fig_acum.update_layout(title="Dinámica de Llenado (Curvas Acumuladas)", xaxis_title="Fechas", yaxis_title="Emergencia Acumulada (%)", height=430, hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)), use_container_width=True)
 
             with col_disp:
-                mask_disp = (df_sincronizado['Campo_Relativo'] > 0) | (df_sincronizado['Sim_Relativo'] > 0)
-                df_disp = df_sincronizado[mask_disp]
+                tab_flujos, tab_acum = st.tabs(["1:1 Flujos", "1:1 Acumulado"])
                 
-                fig_1to1 = go.Figure()
-                fig_1to1.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode='lines', name='1:1', line=dict(color='gray', dash='dash')))
-                fig_1to1.add_trace(go.Scatter(
-                    x=df_disp['Campo_Relativo'], 
-                    y=df_disp['Sim_Relativo'], 
-                    mode='markers', 
-                    name='Flujos por Ventana',
-                    marker=dict(color='#2563eb', size=12, line=dict(width=1, color='DarkBlue')),
-                    text=df_disp['Fecha'].dt.strftime('%d-%m-%Y'),
-                    hovertemplate="<b>Semana del %{text}</b><br>Obs: %{x:.3f}<br>Sim: %{y:.3f}<extra></extra>"
-                ))
-                st.plotly_chart(fig_1to1.update_layout(title=f"Ajuste 1:1 de Flujos (Ventanas de {ventana_agrupacion} días)", xaxis_title="Observado Relativo", yaxis_title="Simulado Relativo", height=400, showlegend=False), use_container_width=True)
+                with tab_flujos:
+                    mask_disp = (df_sincronizado['Campo_Relativo'] > 0) | (df_sincronizado['Sim_Relativo'] > 0)
+                    df_disp = df_sincronizado[mask_disp]
+                    
+                    fig_1to1 = go.Figure()
+                    fig_1to1.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode='lines', name='1:1', line=dict(color='gray', dash='dash')))
+                    fig_1to1.add_trace(go.Scatter(
+                        x=df_disp['Campo_Relativo'], 
+                        y=df_disp['Sim_Relativo'], 
+                        mode='markers', 
+                        name='Flujos por Ventana',
+                        marker=dict(color='#2563eb', size=12, line=dict(width=1, color='DarkBlue')),
+                        text=df_disp['Fecha'].dt.strftime('%d-%m-%Y'),
+                        hovertemplate="<b>Semana del %{text}</b><br>Obs: %{x:.3f}<br>Sim: %{y:.3f}<extra></extra>"
+                    ))
+                    st.plotly_chart(fig_1to1.update_layout(title=f"Ajuste 1:1 de Flujos (Ventanas de {ventana_agrupacion} días)", xaxis_title="Observado Relativo", yaxis_title="Simulado Relativo", height=380, showlegend=False, margin=dict(t=40, b=0, l=0, r=0)), use_container_width=True)
+
+                with tab_acum:
+                    fig_1to1_ac = go.Figure()
+                    fig_1to1_ac.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode='lines', name='1:1', line=dict(color='gray', dash='dash')))
+                    fig_1to1_ac.add_trace(go.Scatter(
+                        x=df_sincronizado['Campo_Acumulado'],
+                        y=df_sincronizado['Sim_Acumulado'],
+                        mode='markers',
+                        name='Emergencia Acumulada',
+                        marker=dict(color='#dc2626', size=12, symbol='diamond', line=dict(width=1, color='DarkRed')),
+                        text=df_sincronizado['Fecha'].dt.strftime('%d-%m-%Y'),
+                        hovertemplate="<b>%{text}</b><br>Obs Acum: %{x:.3f}<br>Sim Acum: %{y:.3f}<extra></extra>"
+                    ))
+                    st.plotly_chart(fig_1to1_ac.update_layout(
+                        title=f"Ajuste 1:1 Acumulado (R²: {r2_acum:.3f} | RMSE: {rmse_acum:.3f})", 
+                        xaxis_title="Obs. Acumulada (Norm)", 
+                        yaxis_title="Sim. Acumulada (Norm)", 
+                        height=380, showlegend=False, margin=dict(t=40, b=0, l=0, r=0)), 
+                        use_container_width=True
+                    )
 
     with tab2:
         st.header("💧 Dinámica Hídrica del Suelo")
@@ -728,7 +783,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
         df.to_excel(writer, index=False, sheet_name='Data_Diaria')
         if df_campo is not None:
             df_campo.to_excel(writer, index=False, sheet_name='Campo_Validacion')
-            pd.DataFrame({'Métrica': ['PEC (%)', 'Lag Control (días)', 'Lead Time Control (días)', 'Pearson (Valores > 0)', f'NSE (Flujos {ventana_agrupacion}D)', f'KGE (Flujos {ventana_agrupacion}D)', 'RMSE (Acumulado)', 'CCC (Acumulado)', 'Desfase T50 Global (días)'], 'Valor': [pec, peak_lag, lead_time, pearson_r, nse_flujos, kge_flujos, rmse_acum, ccc_acum, desfase_t50]}).to_excel(writer, sheet_name='Validacion_Campo', index=False)
+            pd.DataFrame({'Métrica': ['PEC (%)', 'Lag Control (días)', 'Lead Time Control (días)', 'Pearson (Valores > 0)', f'NSE (Flujos {ventana_agrupacion}D)', f'KGE (Flujos {ventana_agrupacion}D)', 'RMSE (Acumulado)', 'R2 (Acumulado)', 'CCC (Acumulado)', 'Desfase T50 Global (días)'], 'Valor': [pec, peak_lag, lead_time, pearson_r, nse_flujos, kge_flujos, rmse_acum, r2_acum, ccc_acum, desfase_t50]}).to_excel(writer, sheet_name='Validacion_Campo', index=False)
         pd.DataFrame({'Configuracion': ['T_Base', 'T_Optima', 'T_Critica', 'W_Max', 'Ke', 'Mod_Termico', 'Umbral_Termoinhibicion', 'Ventana_NSE_Dias'], 'Valor': [t_base_val, t_opt_max, t_critica, w_max_val, ke_val, mod_termico, umbral_termoinhibicion, ventana_agrupacion]}).to_excel(writer, sheet_name='Bio_Params', index=False)
 
     st.sidebar.download_button("📥 Descargar Reporte Completo", output.getvalue(), "PREDWEEM_Integral_Lartigau_vK4_9_15_UX.xlsx")
