@@ -404,8 +404,8 @@ with col_t2: t_opt_max = st.number_input("T Óptima Max", value=20.0, step=1.0)
 t_critica = st.sidebar.slider("T Crítica (Stop)", 26.0, 42.0, 30.0)
 
 st.sidebar.markdown("**Objetivos (°Cd)**")
-dga_optimo = st.sidebar.number_input("TT Control Post-emergente", value=600, step=10)
-dga_critico = st.sidebar.number_input("Límite Ventana", value=800, step=10)
+dga_optimo = st.sidebar.number_input("TT Control Post-emergente", value=800, step=10)
+dga_critico = st.sidebar.number_input("Límite Ventana", value=900, step=10)
 
 st.sidebar.divider()
 st.sidebar.markdown("## 💧 3. Balance Hídrico (Suelo)")
