@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 # ===============================================================
-# 🌾 PREDWEEM INTEGRAL vK4.9.16 — LOLIUM LARTIGAU 2026
+# 🌾 PREDWEEM INTEGRAL vK4.9.18 — LOLIUM LARTIGAU 2026
 # Actualización y Rigor Científico:
 # - ADAPTACIÓN LARTIGAU: Coordenadas fijas en -38.6166 para ET0 y balances.
 # - IDENTIDAD: PREDWEEM by GUILLERMO R. CHANTRE.
-# - LATENCIA INICIAL: Bloqueo estricto hasta JD 25 + salida logística de post-maduración.
-# - TERMOINHIBICIÓN CONTINUA: función logística sobre Tmedia_15d, con T50 y pendiente k calibrables.
+# - LATENCIA INICIAL: Bloqueo estricto hasta JD 25 + salida gaussiana acumulada de post-maduración.
+# - TERMOINHIBICIÓN CONTINUA: función gaussiana acumulada complementaria sobre Tmedia_15d.
 # - LÓGICA DE BYPASS DUAL SEGURO:
 #      1. Ruptura Térmica (lluvia + descenso térmico) para otoño.
 #      2. Ruptura Masiva para captar eventos extremos como Feb 2025.
@@ -22,6 +22,7 @@ import plotly.graph_objects as go
 import pickle
 import io
 import time
+import math
 from datetime import timedelta
 from pathlib import Path
 import base64
@@ -155,32 +156,44 @@ def balance_hidrico_superficial(prec, et0, w_max=20.0, ke_suelo=0.4):
     return w
 
 
-def factor_termoinhibicion_logistica(temperatura, t50=25.5, k=1.2):
-    """Factor continuo de aptitud térmica entre 0 y 1.
+def _cdf_normal_estandar(z):
+    """Función de distribución acumulada N(0,1), sin depender de SciPy."""
+    z = np.asarray(z, dtype=float)
+    erf_vectorizado = np.vectorize(math.erf, otypes=[float])
+    return 0.5 * (1.0 + erf_vectorizado(z / np.sqrt(2.0)))
 
-    t50: temperatura media móvil donde la emergencia potencial queda al 50 %.
-    k: controla la pendiente; valores bajos producen una transición más abrupta.
+
+def factor_termoinhibicion_gaussiana(temperatura, t50=25.5, sigma=2.2):
+    """Aptitud térmica basada en la cola superior de una distribución normal.
+
+    El factor vale 0,50 en T50, se aproxima a 1 a temperaturas menores y a 0
+    cuando la temperatura media móvil supera ampliamente T50.
+
+    sigma: dispersión térmica poblacional. Valores bajos generan una caída
+    más abrupta y valores altos una transición más gradual.
     """
-    if k <= 0:
-        raise ValueError("La pendiente k de termoinhibición debe ser mayor que 0.")
+    if sigma <= 0:
+        raise ValueError("Sigma de termoinhibición debe ser mayor que 0.")
 
     temperatura = np.asarray(temperatura, dtype=float)
-    exponente = np.clip((temperatura - t50) / k, -60.0, 60.0)
-    return 1.0 / (1.0 + np.exp(exponente))
+    z = (temperatura - float(t50)) / float(sigma)
+    return np.clip(1.0 - _cdf_normal_estandar(z), 0.0, 1.0)
 
 
-def factor_salida_latencia_logistica(julian_days, jd50=45.0, k=3.0):
-    """Salida gradual de la latencia primaria/post-maduración entre 0 y 1.
+def factor_salida_latencia_gaussiana(julian_days, jd50=45.0, sigma=5.5):
+    """Liberación acumulada de latencia según una distribución normal.
 
-    jd50: día juliano donde se libera el 50 % del potencial de emergencia.
-    k: pendiente temporal en días; valores bajos hacen la transición más rápida.
+    El factor vale 0,50 en JD50. Antes de esa fecha representa la fracción de
+    semillas que ya completó la post-maduración; después, converge hacia 1.
+
+    sigma: dispersión temporal del banco de semillas, expresada en días.
     """
-    if k <= 0:
-        raise ValueError("La pendiente k de salida de latencia debe ser mayor que 0.")
+    if sigma <= 0:
+        raise ValueError("Sigma de salida de latencia debe ser mayor que 0.")
 
     julian_days = np.asarray(julian_days, dtype=float)
-    exponente = np.clip((jd50 - julian_days) / k, -60.0, 60.0)
-    return 1.0 / (1.0 + np.exp(exponente))
+    z = (julian_days - float(jd50)) / float(sigma)
+    return np.clip(_cdf_normal_estandar(z), 0.0, 1.0)
 
 class PracticalANNModel:
     def __init__(self, IW, bIW, LW, bLW):
@@ -343,8 +356,8 @@ def calcular_metricas_validacion_integral(df_sync, umbral_deteccion=0.05):
 # ---------------------------------------------------------
 def optimizar_parametros_hidricos_2d(
     df_meteo, df_campo, modelo_ann, latitud_lartigau=-38.6166,
-    t50_termoinhibicion=25.5, k_termoinhibicion=1.2,
-    jd50_latencia=45.0, k_latencia=3.0
+    t50_termoinhibicion=25.5, sigma_termoinhibicion=2.2,
+    jd50_latencia=45.0, sigma_latencia=5.5
 ):
     df = df_meteo.copy()
     df['Fecha'] = pd.to_datetime(df['Fecha'])
@@ -381,20 +394,20 @@ def optimizar_parametros_hidricos_2d(
             df_sim['Lluvia_Recarga'] = (df_sim['Prec'] >= w_max).cummax()
             df_sim.loc[~df_sim['Lluvia_Recarga'], "EMERREL"] = 0.0
             
-            # --- Termoinhibición continua con inercia térmica de 15 días ---
+            # --- Termoinhibición gaussiana con inercia térmica de 15 días ---
             df_sim["Tmedia_15d"] = df_sim["Tmedia_aire"].rolling(window=15, min_periods=1).mean()
-            df_sim["Factor_Termico"] = factor_termoinhibicion_logistica(
+            df_sim["Factor_Termico"] = factor_termoinhibicion_gaussiana(
                 df_sim["Tmedia_15d"].values,
                 t50=t50_termoinhibicion,
-                k=k_termoinhibicion
+                sigma=sigma_termoinhibicion
             )
             df_sim["EMERREL"] *= df_sim["Factor_Termico"]
 
             # --- Salida gradual de latencia para evitar pulsos estivales tempranos espurios ---
-            df_sim["Factor_Latencia"] = factor_salida_latencia_logistica(
+            df_sim["Factor_Latencia"] = factor_salida_latencia_gaussiana(
                 df_sim["Julian_days"].values,
                 jd50=jd50_latencia,
-                k=k_latencia
+                sigma=sigma_latencia
             )
             df_sim["EMERREL"] *= df_sim["Factor_Latencia"]
             df_sim.loc[df_sim["Factor_Latencia"] < 0.05, "EMERREL"] = 0.0
@@ -467,16 +480,16 @@ st.sidebar.image("https://raw.githubusercontent.com/PREDWEEM/LOLIUM_LARTIGAU-202
 st.sidebar.markdown("## ⚙️ 2. Fisiología y Logística")
 umbral_er = st.sidebar.slider("Umbral Alerta Temprana", 0.001, 0.80, 0.005)
 
-st.sidebar.markdown("**Termoinhibición continua**")
+st.sidebar.markdown("**Termoinhibición gaussiana**")
 umbral_termoinhibicion = st.sidebar.number_input(
     "T50 de termoinhibición (°C)",
     min_value=15.0, max_value=35.0, value=25.5, step=0.5,
     help="Temperatura media móvil de 15 días donde el factor térmico vale 0,50."
 )
-pendiente_termoinhibicion = st.sidebar.number_input(
-    "Pendiente logística k (°C)",
-    min_value=0.2, max_value=5.0, value=1.2, step=0.1,
-    help="Valores bajos generan una transición más abrupta; valores altos, una inhibición más gradual."
+sigma_termoinhibicion = st.sidebar.number_input(
+    "Dispersión gaussiana σ térmica (°C)",
+    min_value=0.3, max_value=8.0, value=2.2, step=0.1,
+    help="Desvío estándar de los umbrales térmicos del banco de semillas. Valores bajos producen una caída más abrupta."
 )
 
 st.sidebar.markdown("**Salida de latencia estival**")
@@ -485,10 +498,10 @@ jd50_latencia = st.sidebar.number_input(
     min_value=26, max_value=90, value=45, step=1,
     help="Día juliano donde queda liberado el 50 % del potencial de emergencia. JD 45 ≈ 14 de febrero."
 )
-pendiente_latencia = st.sidebar.number_input(
-    "Pendiente salida de latencia (días)",
-    min_value=1.0, max_value=15.0, value=3.0, step=0.5,
-    help="Controla qué tan gradual es la salida de post-maduración. Valores bajos reducen pulsos tempranos."
+sigma_latencia = st.sidebar.number_input(
+    "Dispersión gaussiana σ de latencia (días)",
+    min_value=1.0, max_value=25.0, value=5.5, step=0.5,
+    help="Desvío estándar de las fechas de salida de latencia. Valores bajos concentran la liberación cerca de JD50."
 )
 
 st.sidebar.markdown("**Ruptura de Dormición (Otoño)**")
@@ -533,9 +546,9 @@ with st.sidebar.expander("🛠️ Modo Dev: Calibrador Bio-Físico 2D", expanded
                     modelo_ann,
                     latitud_lartigau=-38.6166,
                     t50_termoinhibicion=umbral_termoinhibicion,
-                    k_termoinhibicion=pendiente_termoinhibicion,
+                    sigma_termoinhibicion=sigma_termoinhibicion,
                     jd50_latencia=jd50_latencia,
-                    k_latencia=pendiente_latencia
+                    sigma_latencia=sigma_latencia
                 )
                 
             st.success("¡Barrido completado de forma rigurosa!")
@@ -585,10 +598,10 @@ if df_meteo_raw is not None and modelo_ann is not None:
 
     # 2. Salida gradual de latencia/post-maduración
     #    JD50=45 evita que una lluvia aislada de fines de enero genere una falsa alarma.
-    df["Factor_Latencia"] = factor_salida_latencia_logistica(
+    df["Factor_Latencia"] = factor_salida_latencia_gaussiana(
         df["Julian_days"].values,
         jd50=float(jd50_latencia),
-        k=float(pendiente_latencia)
+        sigma=float(sigma_latencia)
     )
 
     # 3. Ruptura hídrica segura: la lluvia puede aliviar latencia, pero NO fija EMERREL=1.
@@ -623,11 +636,11 @@ if df_meteo_raw is not None and modelo_ann is not None:
     humedad_relativa = df["W_superficial"] / w_max_val
     df["Hydric_Factor"] = 1 / (1 + np.exp(-10 * (humedad_relativa - 0.3)))
 
-    # 5. Termoinhibición continua con inercia de 15 días
-    df["Factor_Termico"] = factor_termoinhibicion_logistica(
+    # 5. Termoinhibición gaussiana con inercia de 15 días
+    df["Factor_Termico"] = factor_termoinhibicion_gaussiana(
         df["Tmedia_15d"].values,
         t50=umbral_termoinhibicion,
-        k=pendiente_termoinhibicion
+        sigma=sigma_termoinhibicion
     )
 
     # 6. Emergencia final = ANN × agua × temperatura × salida de latencia
@@ -943,10 +956,10 @@ if df_meteo_raw is not None and modelo_ann is not None:
         )
         st.plotly_chart(fig_tt, width="stretch")
 
-        factor_temp_curva = factor_termoinhibicion_logistica(
+        factor_temp_curva = factor_termoinhibicion_gaussiana(
             x_temps,
             t50=umbral_termoinhibicion,
-            k=pendiente_termoinhibicion
+            sigma=sigma_termoinhibicion
         )
         fig_term = go.Figure().add_trace(
             go.Scatter(
@@ -963,7 +976,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
             annotation_text=f"T50 = {umbral_termoinhibicion:.1f} °C"
         )
         fig_term.update_layout(
-            title=f"Termoinhibición logística (k = {pendiente_termoinhibicion:.1f} °C)",
+            title=f"Termoinhibición gaussiana acumulada (σ = {sigma_termoinhibicion:.1f} °C)",
             xaxis_title="Temperatura media móvil de 15 días (°C)",
             yaxis_title="Factor de aptitud térmica (0–1)",
             yaxis=dict(range=[0, 1.05]),
@@ -972,8 +985,8 @@ if df_meteo_raw is not None and modelo_ann is not None:
         st.plotly_chart(fig_term, width="stretch")
 
         jd_curva = np.arange(1, 121)
-        factor_lat_curva = factor_salida_latencia_logistica(
-            jd_curva, jd50=float(jd50_latencia), k=float(pendiente_latencia)
+        factor_lat_curva = factor_salida_latencia_gaussiana(
+            jd_curva, jd50=float(jd50_latencia), sigma=float(sigma_latencia)
         )
         fig_lat = go.Figure().add_trace(
             go.Scatter(
@@ -987,7 +1000,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
             annotation_text=f"JD50 = {int(jd50_latencia)}"
         )
         fig_lat.update_layout(
-            title=f"Salida logística de latencia (k = {pendiente_latencia:.1f} días)",
+            title=f"Salida gaussiana acumulada de latencia (σ = {sigma_latencia:.1f} días)",
             xaxis_title="Día juliano", yaxis_title="Factor de latencia (0–1)",
             yaxis=dict(range=[0, 1.05]), height=360
         )
@@ -1007,20 +1020,20 @@ if df_meteo_raw is not None and modelo_ann is not None:
         pd.DataFrame({
             'Configuracion': [
                 'T_Base', 'T_Optima', 'T_Critica', 'W_Max', 'Ke', 'Mod_Termico',
-                'T50_Termoinhibicion', 'Pendiente_Termoinhibicion_k',
-                'JD50_Salida_Latencia', 'Pendiente_Latencia_dias'
+                'T50_Termoinhibicion', 'Sigma_Termoinhibicion_C',
+                'JD50_Salida_Latencia', 'Sigma_Latencia_dias'
             ],
             'Valor': [
                 t_base_val, t_opt_max, t_critica, w_max_val, ke_val, mod_termico,
-                umbral_termoinhibicion, pendiente_termoinhibicion,
-                jd50_latencia, pendiente_latencia
+                umbral_termoinhibicion, sigma_termoinhibicion,
+                jd50_latencia, sigma_latencia
             ]
         }).to_excel(writer, sheet_name='Bio_Params', index=False)
 
     st.sidebar.download_button(
         "📥 Descargar Reporte Lartigau",
         output.getvalue(),
-        "PREDWEEM_Integral_Lartigau_vK4_9_17_Sin_Pico_Enero.xlsx"
+        "PREDWEEM_Integral_Lartigau_vK4_9_18_Gaussianas.xlsx"
     )
 
 else:
