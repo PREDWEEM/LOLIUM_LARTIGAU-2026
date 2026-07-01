@@ -156,7 +156,7 @@ def balance_hidrico_superficial(prec, et0, w_max=20.0, ke_suelo=0.4):
     return w
 
 
-def factor_termoinhibicion_normal(temperatura, media=25.0, desvio=1.0):
+def factor_termoinhibicion_normal(temperatura, media=26.0, desvio=1.0):
     """Factor continuo de aptitud térmica basado en una distribución normal.
 
     Se utiliza la función de supervivencia:
