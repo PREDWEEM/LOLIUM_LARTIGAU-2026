@@ -333,7 +333,7 @@ def optimizar_parametros_hidricos_2d(df_meteo, df_campo, modelo_ann, latitud_lar
             df_sim.loc[~df_sim['Lluvia_Recarga'], "EMERREL"] = 0.0
             
             # --- Ajuste Optimizador: Mayor inercia térmica (15 días) ---
-            df_sim["Tmedia_15d"] = df_sim["Tmedia_aire"].rolling(window=15, min_periods=1).mean()
+            df_sim["Tmedia_15d"] = df_sim["Tmedia_aire"].rolling(window=20, min_periods=1).mean()
             df_sim.loc[df_sim["Tmedia_15d"] >= 24.0, "EMERREL"] = 0.0
             
             df_sync = sincronizar_intervalos_variables(df_sim, df_campo, col_fecha, col_plm2)
