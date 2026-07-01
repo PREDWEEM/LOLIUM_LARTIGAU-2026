@@ -4,9 +4,9 @@
 # Actualización y Rigor Científico:
 # - ADAPTACIÓN LARTIGAU: Coordenadas fijas en -38.6166 para ET0 y balances.
 # - IDENTIDAD: PREDWEEM by GUILLERMO R. CHANTRE.
-# - LATENCIA INICIAL: Bloqueo estricto de emergencia los primeros 25 días del año.
+# - LATENCIA INICIAL: Bloqueo estricto hasta JD 25 + salida logística de post-maduración.
 # - TERMOINHIBICIÓN CONTINUA: función logística sobre Tmedia_15d, con T50 y pendiente k calibrables.
-# - LÓGICA DE BYPASS DUAL:
+# - LÓGICA DE BYPASS DUAL SEGURO:
 #      1. Ruptura Térmica (lluvia + descenso térmico) para otoño.
 #      2. Ruptura Masiva para captar eventos extremos como Feb 2025.
 # - VALIDACIÓN DE FRECUENCIA VARIABLE: Integración Dinámica de Intervalo Real (Event-to-Event).
@@ -166,6 +166,20 @@ def factor_termoinhibicion_logistica(temperatura, t50=25.5, k=1.2):
 
     temperatura = np.asarray(temperatura, dtype=float)
     exponente = np.clip((temperatura - t50) / k, -60.0, 60.0)
+    return 1.0 / (1.0 + np.exp(exponente))
+
+
+def factor_salida_latencia_logistica(julian_days, jd50=45.0, k=3.0):
+    """Salida gradual de la latencia primaria/post-maduración entre 0 y 1.
+
+    jd50: día juliano donde se libera el 50 % del potencial de emergencia.
+    k: pendiente temporal en días; valores bajos hacen la transición más rápida.
+    """
+    if k <= 0:
+        raise ValueError("La pendiente k de salida de latencia debe ser mayor que 0.")
+
+    julian_days = np.asarray(julian_days, dtype=float)
+    exponente = np.clip((jd50 - julian_days) / k, -60.0, 60.0)
     return 1.0 / (1.0 + np.exp(exponente))
 
 class PracticalANNModel:
@@ -329,7 +343,8 @@ def calcular_metricas_validacion_integral(df_sync, umbral_deteccion=0.05):
 # ---------------------------------------------------------
 def optimizar_parametros_hidricos_2d(
     df_meteo, df_campo, modelo_ann, latitud_lartigau=-38.6166,
-    t50_termoinhibicion=25.5, k_termoinhibicion=1.2
+    t50_termoinhibicion=25.5, k_termoinhibicion=1.2,
+    jd50_latencia=45.0, k_latencia=3.0
 ):
     df = df_meteo.copy()
     df['Fecha'] = pd.to_datetime(df['Fecha'])
@@ -367,13 +382,22 @@ def optimizar_parametros_hidricos_2d(
             df_sim.loc[~df_sim['Lluvia_Recarga'], "EMERREL"] = 0.0
             
             # --- Termoinhibición continua con inercia térmica de 15 días ---
-            df_sim["Tmedia_15d"] = df_sim["Tmedia_aire"].rolling(window=10, min_periods=1).mean()
+            df_sim["Tmedia_15d"] = df_sim["Tmedia_aire"].rolling(window=15, min_periods=1).mean()
             df_sim["Factor_Termico"] = factor_termoinhibicion_logistica(
                 df_sim["Tmedia_15d"].values,
                 t50=t50_termoinhibicion,
                 k=k_termoinhibicion
             )
             df_sim["EMERREL"] *= df_sim["Factor_Termico"]
+
+            # --- Salida gradual de latencia para evitar pulsos estivales tempranos espurios ---
+            df_sim["Factor_Latencia"] = factor_salida_latencia_logistica(
+                df_sim["Julian_days"].values,
+                jd50=jd50_latencia,
+                k=k_latencia
+            )
+            df_sim["EMERREL"] *= df_sim["Factor_Latencia"]
+            df_sim.loc[df_sim["Factor_Latencia"] < 0.05, "EMERREL"] = 0.0
             
             df_sync = sincronizar_intervalos_variables(df_sim, df_campo, col_fecha, col_plm2)
             metricas = calcular_metricas_validacion_integral(df_sync)
@@ -455,6 +479,18 @@ pendiente_termoinhibicion = st.sidebar.number_input(
     help="Valores bajos generan una transición más abrupta; valores altos, una inhibición más gradual."
 )
 
+st.sidebar.markdown("**Salida de latencia estival**")
+jd50_latencia = st.sidebar.number_input(
+    "JD50 salida de latencia",
+    min_value=26, max_value=90, value=45, step=1,
+    help="Día juliano donde queda liberado el 50 % del potencial de emergencia. JD 45 ≈ 14 de febrero."
+)
+pendiente_latencia = st.sidebar.number_input(
+    "Pendiente salida de latencia (días)",
+    min_value=1.0, max_value=15.0, value=3.0, step=0.5,
+    help="Controla qué tan gradual es la salida de post-maduración. Valores bajos reducen pulsos tempranos."
+)
+
 st.sidebar.markdown("**Ruptura de Dormición (Otoño)**")
 umbral_choque_hidrico = st.sidebar.slider("Choque Hídrico 3 días (mm)", 20.0, 100.0, 30.0)
 
@@ -497,7 +533,9 @@ with st.sidebar.expander("🛠️ Modo Dev: Calibrador Bio-Físico 2D", expanded
                     modelo_ann,
                     latitud_lartigau=-38.6166,
                     t50_termoinhibicion=umbral_termoinhibicion,
-                    k_termoinhibicion=pendiente_termoinhibicion
+                    k_termoinhibicion=pendiente_termoinhibicion,
+                    jd50_latencia=jd50_latencia,
+                    k_latencia=pendiente_latencia
                 )
                 
             st.success("¡Barrido completado de forma rigurosa!")
@@ -540,44 +578,71 @@ if df_meteo_raw is not None and modelo_ann is not None:
     # ----------------------------------------------------
     # CORRECCIÓN: Lógica Fisiológica Ordenada y BYPASS DUAL
     # ----------------------------------------------------
-    # 1. Predicción Neural Base
+    # 1. Predicción neuronal base: potencial diario, sin forzar pulsos artificiales
     X = df[["Julian_days", "TMAX_suelo", "TMIN_suelo", "Prec"]].to_numpy(float)
     emerrel_raw, _ = modelo_ann.predict(X)
-    df["EMERREL"] = np.maximum(emerrel_raw, 0.0)
+    df["EMERREL_RAW"] = np.maximum(emerrel_raw, 0.0)
 
-    # 2. Lógica BYPASS DUAL (Condicionado y Extremo) - Estrictamente después de Latencia (día 25)
+    # 2. Salida gradual de latencia/post-maduración
+    #    JD50=45 evita que una lluvia aislada de fines de enero genere una falsa alarma.
+    df["Factor_Latencia"] = factor_salida_latencia_logistica(
+        df["Julian_days"].values,
+        jd50=float(jd50_latencia),
+        k=float(pendiente_latencia)
+    )
+
+    # 3. Ruptura hídrica segura: la lluvia puede aliviar latencia, pero NO fija EMERREL=1.
     df["Prec_3d"] = df["Prec"].rolling(window=3, min_periods=1).sum()
-    
-    # Bypass A: Lluvias masivas rompen dormición a la fuerza (> 1.5x umbral, es decir, ej: > 45mm)
-    mask_ruptura_masiva = (df["Julian_days"] > 25) & (df["Julian_days"] <= 110) & (df["Prec_3d"] >= (umbral_choque_hidrico * 1.5))
-    
-    # Bypass B: lluvias moderadas requieren que la temperatura media móvil esté por debajo de T50
-    mask_ruptura_termica = (df["Julian_days"] > 25) & (df["Julian_days"] <= 110) & (df["Prec_3d"] >= umbral_choque_hidrico) & (df["Tmedia_15d"] < umbral_termoinhibicion)
-    
-    mask_ruptura = mask_ruptura_masiva | mask_ruptura_termica
-    df.loc[mask_ruptura, "EMERREL"] = np.maximum(df.loc[mask_ruptura, "EMERREL"], 1.0)
+    ventana_biologica = (df["Factor_Latencia"] >= 0.05) & (df["Julian_days"] <= 110)
 
-    # 3. Balance Hídrico Superficial (Lartigau)
-    df["ET0"] = calcular_et0_hargreaves(df["Julian_days"].values, df["TMAX"].values, df["TMIN"].values, latitud=-38.6166)
-    df["W_superficial"] = balance_hidrico_superficial(df["Prec"].values, df["ET0"].values, w_max=w_max_val, ke_suelo=ke_val)
+    mask_ruptura_masiva = (
+        ventana_biologica
+        & (df["Prec_3d"] >= (umbral_choque_hidrico * 1.5))
+    )
+    mask_ruptura_termica = (
+        ventana_biologica
+        & (df["Prec_3d"] >= umbral_choque_hidrico)
+        & (df["Tmedia_15d"] < umbral_termoinhibicion)
+    )
+
+    # Una lluvia moderada eleva como máximo la liberación al 45 %; una masiva, al 65 %.
+    df.loc[mask_ruptura_termica, "Factor_Latencia"] = np.maximum(
+        df.loc[mask_ruptura_termica, "Factor_Latencia"], 0.45
+    )
+    df.loc[mask_ruptura_masiva, "Factor_Latencia"] = np.maximum(
+        df.loc[mask_ruptura_masiva, "Factor_Latencia"], 0.65
+    )
+
+    # 4. Balance hídrico superficial (Lartigau)
+    df["ET0"] = calcular_et0_hargreaves(
+        df["Julian_days"].values, df["TMAX"].values, df["TMIN"].values, latitud=-38.6166
+    )
+    df["W_superficial"] = balance_hidrico_superficial(
+        df["Prec"].values, df["ET0"].values, w_max=w_max_val, ke_suelo=ke_val
+    )
     humedad_relativa = df["W_superficial"] / w_max_val
     df["Hydric_Factor"] = 1 / (1 + np.exp(-10 * (humedad_relativa - 0.3)))
-    df["EMERREL"] = df["EMERREL"] * df["Hydric_Factor"]
 
-    df.loc[humedad_relativa < 0.20, "EMERREL"] = 0.0
-    df['Lluvia_Recarga'] = (df['Prec'] >= w_max_val).cummax()
-    df.loc[~df['Lluvia_Recarga'], "EMERREL"] = 0.0
-
-    # 4. Termoinhibición continua (Inercia térmica de 15 días)
-    #    La ANN aporta la emergencia potencial y este factor la modula gradualmente.
+    # 5. Termoinhibición continua con inercia de 15 días
     df["Factor_Termico"] = factor_termoinhibicion_logistica(
         df["Tmedia_15d"].values,
         t50=umbral_termoinhibicion,
         k=pendiente_termoinhibicion
     )
-    df["EMERREL"] *= df["Factor_Termico"]
 
-    # 5. BLOQUEO FINAL ESTRICTO: Latencia Temprana (Primeros 25 días del año)
+    # 6. Emergencia final = ANN × agua × temperatura × salida de latencia
+    df["EMERREL"] = (
+        df["EMERREL_RAW"]
+        * df["Hydric_Factor"]
+        * df["Factor_Termico"]
+        * df["Factor_Latencia"]
+    )
+
+    # Reglas duras mínimas de seguridad fisiológica
+    df.loc[humedad_relativa < 0.20, "EMERREL"] = 0.0
+    df['Lluvia_Recarga'] = (df['Prec'] >= w_max_val).cummax()
+    df.loc[~df['Lluvia_Recarga'], "EMERREL"] = 0.0
+    df.loc[df["Factor_Latencia"] < 0.05, "EMERREL"] = 0.0
     df.loc[df["Julian_days"] <= 25, "EMERREL"] = 0.0
     # ----------------------------------------------------
 
@@ -906,6 +971,28 @@ if df_meteo_raw is not None and modelo_ann is not None:
         )
         st.plotly_chart(fig_term, width="stretch")
 
+        jd_curva = np.arange(1, 121)
+        factor_lat_curva = factor_salida_latencia_logistica(
+            jd_curva, jd50=float(jd50_latencia), k=float(pendiente_latencia)
+        )
+        fig_lat = go.Figure().add_trace(
+            go.Scatter(
+                x=jd_curva, y=factor_lat_curva, mode="lines",
+                name="Salida de latencia", line=dict(color="#7c3aed", width=4)
+            )
+        )
+        fig_lat.add_hline(y=0.05, line_dash="dot", annotation_text="Umbral operativo 0,05")
+        fig_lat.add_vline(
+            x=jd50_latencia, line_dash="dash",
+            annotation_text=f"JD50 = {int(jd50_latencia)}"
+        )
+        fig_lat.update_layout(
+            title=f"Salida logística de latencia (k = {pendiente_latencia:.1f} días)",
+            xaxis_title="Día juliano", yaxis_title="Factor de latencia (0–1)",
+            yaxis=dict(range=[0, 1.05]), height=360
+        )
+        st.plotly_chart(fig_lat, width="stretch")
+
     # REPORTE EN EXCEL
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -920,18 +1007,20 @@ if df_meteo_raw is not None and modelo_ann is not None:
         pd.DataFrame({
             'Configuracion': [
                 'T_Base', 'T_Optima', 'T_Critica', 'W_Max', 'Ke', 'Mod_Termico',
-                'T50_Termoinhibicion', 'Pendiente_Termoinhibicion_k'
+                'T50_Termoinhibicion', 'Pendiente_Termoinhibicion_k',
+                'JD50_Salida_Latencia', 'Pendiente_Latencia_dias'
             ],
             'Valor': [
                 t_base_val, t_opt_max, t_critica, w_max_val, ke_val, mod_termico,
-                umbral_termoinhibicion, pendiente_termoinhibicion
+                umbral_termoinhibicion, pendiente_termoinhibicion,
+                jd50_latencia, pendiente_latencia
             ]
         }).to_excel(writer, sheet_name='Bio_Params', index=False)
 
     st.sidebar.download_button(
         "📥 Descargar Reporte Lartigau",
         output.getvalue(),
-        "PREDWEEM_Integral_Lartigau_vK4_9_16_Termoinhibicion.xlsx"
+        "PREDWEEM_Integral_Lartigau_vK4_9_17_Sin_Pico_Enero.xlsx"
     )
 
 else:
