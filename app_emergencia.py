@@ -1,17 +1,15 @@
 # -*- coding: utf-8 -*-
 # ===============================================================
-# 🌾 PREDWEEM INTEGRAL vK4.9.18 — LOLIUM LARTIGAU 2026
+# 🌾 PREDWEEM INTEGRAL vK4.9.15 — LOLIUM LARTIGAU 2026
 # Actualización y Rigor Científico:
 # - ADAPTACIÓN LARTIGAU: Coordenadas fijas en -38.6166 para ET0 y balances.
 # - IDENTIDAD: PREDWEEM by GUILLERMO R. CHANTRE.
-# - LATENCIA INICIAL: Bloqueo estricto hasta JD 25 + salida gaussiana acumulada de post-maduración.
-# - TERMOINHIBICIÓN CONTINUA: función gaussiana acumulada complementaria sobre Tmedia_15d.
-# - LÓGICA DE BYPASS DUAL SEGURO:
-#      1. Ruptura Térmica (lluvia + descenso térmico) para otoño.
-#      2. Ruptura Masiva para captar eventos extremos como Feb 2025.
-# - VALIDACIÓN DE FRECUENCIA VARIABLE: Integración Dinámica de Intervalo Real (Event-to-Event).
+# - LATENCIA INICIAL: Bloqueo estricto de emergencia los primeros 25 días del año.
+# - VALIDACIÓN DE FRECUENCIA VARIABLE: Reemplazo de remuestreo sintético por
+#   Integración Dinámica de Intervalo Real (Event-to-Event), apto para frecuencias de 7 a 21 días.
 # - OPTIMIZADOR 2D BIO-FÍSICO: Barrido de alta eficiencia sobre W_Max y Ke usando fechas de campo puras.
 # - COINCIDENCIA OPERATIVA: Métricas F1-Score, Exactitud Global y Matriz de Confusión interactiva.
+# - SINCRONÍA DE INICIO: Evaluación del desfase temporal del primer flujo (Gatillo de DGA).
 # - UX DINÁMICA: Sombreados de fondo basados en las fechas reales de muestreo.
 # ===============================================================
 
@@ -22,7 +20,6 @@ import plotly.graph_objects as go
 import pickle
 import io
 import time
-import math
 from datetime import timedelta
 from pathlib import Path
 import base64
@@ -155,46 +152,6 @@ def balance_hidrico_superficial(prec, et0, w_max=20.0, ke_suelo=0.4):
         w[i] = max(0.0, min(w_max, w[i-1] + prec[i] - evaporacion_real))
     return w
 
-
-def _cdf_normal_estandar(z):
-    """Función de distribución acumulada N(0,1), sin depender de SciPy."""
-    z = np.asarray(z, dtype=float)
-    erf_vectorizado = np.vectorize(math.erf, otypes=[float])
-    return 0.5 * (1.0 + erf_vectorizado(z / np.sqrt(2.0)))
-
-
-def factor_termoinhibicion_gaussiana(temperatura, t50=25.5, sigma=2.2):
-    """Aptitud térmica basada en la cola superior de una distribución normal.
-
-    El factor vale 0,50 en T50, se aproxima a 1 a temperaturas menores y a 0
-    cuando la temperatura media móvil supera ampliamente T50.
-
-    sigma: dispersión térmica poblacional. Valores bajos generan una caída
-    más abrupta y valores altos una transición más gradual.
-    """
-    if sigma <= 0:
-        raise ValueError("Sigma de termoinhibición debe ser mayor que 0.")
-
-    temperatura = np.asarray(temperatura, dtype=float)
-    z = (temperatura - float(t50)) / float(sigma)
-    return np.clip(1.0 - _cdf_normal_estandar(z), 0.0, 1.0)
-
-
-def factor_salida_latencia_gaussiana(julian_days, jd50=45.0, sigma=5.5):
-    """Liberación acumulada de latencia según una distribución normal.
-
-    El factor vale 0,50 en JD50. Antes de esa fecha representa la fracción de
-    semillas que ya completó la post-maduración; después, converge hacia 1.
-
-    sigma: dispersión temporal del banco de semillas, expresada en días.
-    """
-    if sigma <= 0:
-        raise ValueError("Sigma de salida de latencia debe ser mayor que 0.")
-
-    julian_days = np.asarray(julian_days, dtype=float)
-    z = (julian_days - float(jd50)) / float(sigma)
-    return np.clip(_cdf_normal_estandar(z), 0.0, 1.0)
-
 class PracticalANNModel:
     def __init__(self, IW, bIW, LW, bLW):
         self.IW, self.bIW, self.LW, self.bLW = IW, bIW, LW, bLW
@@ -324,7 +281,7 @@ def calcular_metricas_validacion_integral(df_sync, umbral_deteccion=0.05):
     obs_eventos = df_sync['Campo_Relativo'] > umbral_deteccion
     sim_eventos = df_sync['Sim_Relativo'] > umbral_deteccion
 
-    hits = np.sum(obs_eventos & sim_eventos)                  
+    hits = np.sum(obs_eventos & sim_eventos)                 
     misses = np.sum(obs_eventos & ~sim_eventos)              
     false_alarms = np.sum(~obs_eventos & sim_eventos)        
     correct_negatives = np.sum(~obs_eventos & ~sim_eventos)  
@@ -354,11 +311,7 @@ def calcular_metricas_validacion_integral(df_sync, umbral_deteccion=0.05):
 # ---------------------------------------------------------
 # 4.5 MÓDULO OPTIMIZADOR 2D (CALIBRADO BIO-FÍSICO PURO)
 # ---------------------------------------------------------
-def optimizar_parametros_hidricos_2d(
-    df_meteo, df_campo, modelo_ann, latitud_lartigau=-38.6166,
-    t50_termoinhibicion=25.5, sigma_termoinhibicion=2.2,
-    jd50_latencia=45.0, sigma_latencia=5.5
-):
+def optimizar_parametros_hidricos_2d(df_meteo, df_campo, modelo_ann, latitud_lartigau=-38.6166):
     df = df_meteo.copy()
     df['Fecha'] = pd.to_datetime(df['Fecha'])
     df["Julian_days"] = df["Fecha"].dt.dayofyear
@@ -394,23 +347,8 @@ def optimizar_parametros_hidricos_2d(
             df_sim['Lluvia_Recarga'] = (df_sim['Prec'] >= w_max).cummax()
             df_sim.loc[~df_sim['Lluvia_Recarga'], "EMERREL"] = 0.0
             
-            # --- Termoinhibición gaussiana con inercia térmica de 15 días ---
-            df_sim["Tmedia_15d"] = df_sim["Tmedia_aire"].rolling(window=15, min_periods=1).mean()
-            df_sim["Factor_Termico"] = factor_termoinhibicion_gaussiana(
-                df_sim["Tmedia_15d"].values,
-                t50=t50_termoinhibicion,
-                sigma=sigma_termoinhibicion
-            )
-            df_sim["EMERREL"] *= df_sim["Factor_Termico"]
-
-            # --- Salida gradual de latencia para evitar pulsos estivales tempranos espurios ---
-            df_sim["Factor_Latencia"] = factor_salida_latencia_gaussiana(
-                df_sim["Julian_days"].values,
-                jd50=jd50_latencia,
-                sigma=sigma_latencia
-            )
-            df_sim["EMERREL"] *= df_sim["Factor_Latencia"]
-            df_sim.loc[df_sim["Factor_Latencia"] < 0.05, "EMERREL"] = 0.0
+            df_sim["Tmedia_10d"] = df_sim["Tmedia_aire"].rolling(window=10, min_periods=1).mean()
+            df_sim.loc[df_sim["Tmedia_10d"] >= 24.0, "EMERREL"] = 0.0
             
             df_sync = sincronizar_intervalos_variables(df_sim, df_campo, col_fecha, col_plm2)
             metricas = calcular_metricas_validacion_integral(df_sync)
@@ -475,34 +413,13 @@ df_meteo_raw = load_data(archivo_meteo, "meteo_daily")
 df_campo_raw = load_data(archivo_campo, "LARTIGAU_campo")
 
 # --- SIDEBAR ---
-st.sidebar.image("https://raw.githubusercontent.com/PREDWEEM/LOLIUM_LARTIGAU-2026/main/logo.png", width="stretch")
+st.sidebar.image("https://raw.githubusercontent.com/PREDWEEM/LOLIUM_LARTIGAU-2026/main/logo.png", use_container_width=True)
 
 st.sidebar.markdown("## ⚙️ 2. Fisiología y Logística")
 umbral_er = st.sidebar.slider("Umbral Alerta Temprana", 0.001, 0.80, 0.005)
 
-st.sidebar.markdown("**Termoinhibición gaussiana**")
-umbral_termoinhibicion = st.sidebar.number_input(
-    "T50 de termoinhibición (°C)",
-    min_value=15.0, max_value=35.0, value=25.5, step=0.5,
-    help="Temperatura media móvil de 15 días donde el factor térmico vale 0,50."
-)
-sigma_termoinhibicion = st.sidebar.number_input(
-    "Dispersión gaussiana σ térmica (°C)",
-    min_value=0.3, max_value=8.0, value=2.2, step=0.1,
-    help="Desvío estándar de los umbrales térmicos del banco de semillas. Valores bajos producen una caída más abrupta."
-)
-
-st.sidebar.markdown("**Salida de latencia estival**")
-jd50_latencia = st.sidebar.number_input(
-    "JD50 salida de latencia",
-    min_value=26, max_value=90, value=45, step=1,
-    help="Día juliano donde queda liberado el 50 % del potencial de emergencia. JD 45 ≈ 14 de febrero."
-)
-sigma_latencia = st.sidebar.number_input(
-    "Dispersión gaussiana σ de latencia (días)",
-    min_value=1.0, max_value=25.0, value=5.5, step=0.5,
-    help="Desvío estándar de las fechas de salida de latencia. Valores bajos concentran la liberación cerca de JD50."
-)
+st.sidebar.markdown("**Ruptura de Dormición Estival**")
+umbral_termoinhibicion = st.sidebar.number_input("Umbral Termoinhibición (°C)", 15.0, 35.0, 24.0, 0.5)
 
 st.sidebar.markdown("**Ruptura de Dormición (Otoño)**")
 umbral_choque_hidrico = st.sidebar.slider("Choque Hídrico 3 días (mm)", 20.0, 100.0, 30.0)
@@ -540,16 +457,7 @@ with st.sidebar.expander("🛠️ Modo Dev: Calibrador Bio-Físico 2D", expanded
                 col_fecha_opt = 'FECHA' if 'FECHA' in df_campo_opt.columns else df_campo_opt.columns[0]
                 df_campo_opt[col_fecha_opt] = pd.to_datetime(df_campo_opt[col_fecha_opt])
                 
-                tabla_optima = optimizar_parametros_hidricos_2d(
-                    df_meteo_opt,
-                    df_campo_opt,
-                    modelo_ann,
-                    latitud_lartigau=-38.6166,
-                    t50_termoinhibicion=umbral_termoinhibicion,
-                    sigma_termoinhibicion=sigma_termoinhibicion,
-                    jd50_latencia=jd50_latencia,
-                    sigma_latencia=sigma_latencia
-                )
+                tabla_optima = optimizar_parametros_hidricos_2d(df_meteo_opt, df_campo_opt, modelo_ann, latitud_lartigau=-38.6166)
                 
             st.success("¡Barrido completado de forma rigurosa!")
             st.dataframe(tabla_optima.head(15))
@@ -573,10 +481,6 @@ if df_meteo_raw is not None and modelo_ann is not None:
     amplitud_termica = (df["TMAX"] - df["TMIN"]) / 2
     df["TMAX_suelo"] = df["Tmedia_aire"] + (amplitud_termica * mod_termico)
     df["TMIN_suelo"] = df["Tmedia_aire"] - (amplitud_termica * mod_termico)
-    
-    # Pre-cálculo de Inercia Térmica a 15 días (Requisito para Bypass)
-    df["Tmedia"] = df["Tmedia_aire"]
-    df["Tmedia_15d"] = df["Tmedia"].rolling(window=15, min_periods=1).mean()
 
     df_campo, col_fecha, col_plm2 = None, None, None
     if df_campo_raw is not None:
@@ -589,73 +493,35 @@ if df_meteo_raw is not None and modelo_ann is not None:
         df_campo['Campo_Normalizado'] = df_campo[col_plm2] / max_plm2 if max_plm2 > 0 else 0
 
     # ----------------------------------------------------
-    # CORRECCIÓN: Lógica Fisiológica Ordenada y BYPASS DUAL
+    # CORRECCIÓN: Lógica Fisiológica Ordenada
     # ----------------------------------------------------
-    # 1. Predicción neuronal base: potencial diario, sin forzar pulsos artificiales
+    # 1. Predicción Neural Base
     X = df[["Julian_days", "TMAX_suelo", "TMIN_suelo", "Prec"]].to_numpy(float)
     emerrel_raw, _ = modelo_ann.predict(X)
-    df["EMERREL_RAW"] = np.maximum(emerrel_raw, 0.0)
+    df["EMERREL"] = np.maximum(emerrel_raw, 0.0)
 
-    # 2. Salida gradual de latencia/post-maduración
-    #    JD50=45 evita que una lluvia aislada de fines de enero genere una falsa alarma.
-    df["Factor_Latencia"] = factor_salida_latencia_gaussiana(
-        df["Julian_days"].values,
-        jd50=float(jd50_latencia),
-        sigma=float(sigma_latencia)
-    )
-
-    # 3. Ruptura hídrica segura: la lluvia puede aliviar latencia, pero NO fija EMERREL=1.
+    # 2. Bypass Ruptura Temprana (Lartigau = 1.0) - ESTRICTAMENTE LUEGO DEL DÍA 25
     df["Prec_3d"] = df["Prec"].rolling(window=3, min_periods=1).sum()
-    ventana_biologica = (df["Factor_Latencia"] >= 0.05) & (df["Julian_days"] <= 110)
+    mask_ruptura = (df["Julian_days"] > 25) & (df["Julian_days"] <= 110) & (df["Prec_3d"] >= umbral_choque_hidrico)
+    df.loc[mask_ruptura, "EMERREL"] = np.maximum(df.loc[mask_ruptura, "EMERREL"], 1.0)
 
-    mask_ruptura_masiva = (
-        ventana_biologica
-        & (df["Prec_3d"] >= (umbral_choque_hidrico * 1.5))
-    )
-    mask_ruptura_termica = (
-        ventana_biologica
-        & (df["Prec_3d"] >= umbral_choque_hidrico)
-        & (df["Tmedia_15d"] < umbral_termoinhibicion)
-    )
-
-    # Una lluvia moderada eleva como máximo la liberación al 45 %; una masiva, al 65 %.
-    df.loc[mask_ruptura_termica, "Factor_Latencia"] = np.maximum(
-        df.loc[mask_ruptura_termica, "Factor_Latencia"], 0.45
-    )
-    df.loc[mask_ruptura_masiva, "Factor_Latencia"] = np.maximum(
-        df.loc[mask_ruptura_masiva, "Factor_Latencia"], 0.65
-    )
-
-    # 4. Balance hídrico superficial (Lartigau)
-    df["ET0"] = calcular_et0_hargreaves(
-        df["Julian_days"].values, df["TMAX"].values, df["TMIN"].values, latitud=-38.6166
-    )
-    df["W_superficial"] = balance_hidrico_superficial(
-        df["Prec"].values, df["ET0"].values, w_max=w_max_val, ke_suelo=ke_val
-    )
+    # 3. Balance Hídrico Superficial (Lartigau)
+    df["ET0"] = calcular_et0_hargreaves(df["Julian_days"].values, df["TMAX"].values, df["TMIN"].values, latitud=-38.6166)
+    df["W_superficial"] = balance_hidrico_superficial(df["Prec"].values, df["ET0"].values, w_max=w_max_val, ke_suelo=ke_val)
     humedad_relativa = df["W_superficial"] / w_max_val
     df["Hydric_Factor"] = 1 / (1 + np.exp(-10 * (humedad_relativa - 0.3)))
+    df["EMERREL"] = df["EMERREL"] * df["Hydric_Factor"]
 
-    # 5. Termoinhibición gaussiana con inercia de 15 días
-    df["Factor_Termico"] = factor_termoinhibicion_gaussiana(
-        df["Tmedia_15d"].values,
-        t50=umbral_termoinhibicion,
-        sigma=sigma_termoinhibicion
-    )
-
-    # 6. Emergencia final = ANN × agua × temperatura × salida de latencia
-    df["EMERREL"] = (
-        df["EMERREL_RAW"]
-        * df["Hydric_Factor"]
-        * df["Factor_Termico"]
-        * df["Factor_Latencia"]
-    )
-
-    # Reglas duras mínimas de seguridad fisiológica
     df.loc[humedad_relativa < 0.20, "EMERREL"] = 0.0
     df['Lluvia_Recarga'] = (df['Prec'] >= w_max_val).cummax()
     df.loc[~df['Lluvia_Recarga'], "EMERREL"] = 0.0
-    df.loc[df["Factor_Latencia"] < 0.05, "EMERREL"] = 0.0
+
+    # 4. Escudo Termofisiológico
+    df["Tmedia"] = df["Tmedia_aire"]
+    df["Tmedia_10d"] = df["Tmedia"].rolling(window=10, min_periods=1).mean()
+    df.loc[df["Tmedia_10d"] >= umbral_termoinhibicion, "EMERREL"] = 0.0
+
+    # 5. BLOQUEO FINAL ESTRICTO: Latencia Temprana (Primeros 25 días del año)
     df.loc[df["Julian_days"] <= 25, "EMERREL"] = 0.0
     # ----------------------------------------------------
 
@@ -751,7 +617,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
 
     # FRONT-END VISUAL
     colorscale_hard = [[0.0, "green"], [0.01, "green"], [0.02, "red"], [1.0, "red"]]
-    st.plotly_chart(go.Figure(data=go.Heatmap(z=[df["EMERREL"].values], x=df["Fecha"], y=["Emergencia"], colorscale=colorscale_hard, zmin=0, zmax=1, showscale=False)).update_layout(height=120, margin=dict(t=30, b=0, l=10, r=10), title="Mapa de Riesgo Temporal (Tasa Diaria)"), width="stretch")
+    st.plotly_chart(go.Figure(data=go.Heatmap(z=[df["EMERREL"].values], x=df["Fecha"], y=["Emergencia"], colorscale=colorscale_hard, zmin=0, zmax=1, showscale=False)).update_layout(height=120, margin=dict(t=30, b=0, l=10, r=10), title="Mapa de Riesgo Temporal (Tasa Diaria)"), use_container_width=True)
 
     tab1, tab2, tab3, tab4 = st.tabs(["📊 MONITOR DE DECISIÓN", "💧 PRECIPITACIONES Y SUELO", "📈 ANÁLISIS ESTRATÉGICO", "🧪 BIO-CALIBRACIÓN"])
 
@@ -789,7 +655,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
                 <p style="color:#1e293b; font-weight:bold; margin-top:0; margin-bottom:10px;">🧩 Matriz de Confusión (Intervalos de Monitoreo)</p>
                 <table style="width:100%; text-align:center; border-collapse: collapse; font-family:sans-serif;">
                     <tr>
-                        <th style="border-bottom:2px solid #e2e8f0; padding:10px; color:#475569; width:34%;">Realidad ⬇ / Simulación ➡</th>
+                        <th style="border-bottom:2px solid #e2e8f0; padding:10px; color:#475569; width:34%;">Realidad ⬇ \ Simulación ➡</th>
                         <th style="border-bottom:2px solid #e2e8f0; padding:10px; background-color:#eff6ff; color:#1e3a8a; width:33%;">🚨 Modelo Predice FLUJO</th>
                         <th style="border-bottom:2px solid #e2e8f0; padding:10px; background-color:#f8fafc; color:#475569; width:33%;">💤 Modelo Predice INACTIVO</th>
                     </tr>
@@ -850,7 +716,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
                     )
 
             fig_emer.update_layout(title="Dinámica Fisiológica de Emergencia (Bloques según Intervalos Reales)", yaxis_title="Log10(Emergencia + 0.01)", height=450, hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-            st.plotly_chart(fig_emer, width="stretch")
+            st.plotly_chart(fig_emer, use_container_width=True)
 
             if fecha_inicio_ventana:
                 st.success(f"📅 **Inicio de Conteo Térmico:** {fecha_inicio_ventana.strftime('%d-%m-%Y')} (Detección biológica inicial)")
@@ -860,7 +726,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
 
         with col_gauge:
             max_axis = dga_critico * 1.2
-            st.plotly_chart(go.Figure().add_trace(go.Indicator(mode="gauge+number", value=dga_hoy, domain={'x': [0, 1], 'y': [0, 1]}, title={'text': "<b>TT POST-EMERGENCIA (°Cd)</b>", 'font': {'size': 18}}, gauge={'axis': {'range': [None, max_axis]}, 'bar': {'color': "#1e293b", 'thickness': 0.3}, 'steps': [{'range': [0, dga_optimo], 'color': "#4ade80"}, {'range': [dga_optimo, dga_critico], 'color': "#facc15"}, {'range': [dga_critico, max_axis], 'color': "#f87171"}], 'threshold': {'line': {'color': "#2563eb", 'width': 6}, 'thickness': 0.8, 'value': dga_7dias}})).add_annotation(x=0.5, y=-0.1, text=f"{msg_estado}<br>Pronóstico +7d: <b>{dga_7dias:.1f} °Cd</b>", showarrow=False, font=dict(size=14, color="#1e3a8a"), align="center").update_layout(height=350, margin=dict(t=80, b=50, l=30, r=30)), width="stretch")
+            st.plotly_chart(go.Figure().add_trace(go.Indicator(mode="gauge+number", value=dga_hoy, domain={'x': [0, 1], 'y': [0, 1]}, title={'text': "<b>TT POST-EMERGENCIA (°Cd)</b>", 'font': {'size': 18}}, gauge={'axis': {'range': [None, max_axis]}, 'bar': {'color': "#1e293b", 'thickness': 0.3}, 'steps': [{'range': [0, dga_optimo], 'color': "#4ade80"}, {'range': [dga_optimo, dga_critico], 'color': "#facc15"}, {'range': [dga_critico, max_axis], 'color': "#f87171"}], 'threshold': {'line': {'color': "#2563eb", 'width': 6}, 'thickness': 0.8, 'value': dga_7dias}})).add_annotation(x=0.5, y=-0.1, text=f"{msg_estado}<br>Pronóstico +7d: <b>{dga_7dias:.1f} °Cd</b>", showarrow=False, font=dict(size=14, color="#1e3a8a"), align="center").update_layout(height=350, margin=dict(t=80, b=50, l=30, r=30)), use_container_width=True)
 
         if df_campo is not None and not df_sincronizado.empty:
             st.markdown("---")
@@ -871,7 +737,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
                 fig_acum = go.Figure()
                 fig_acum.add_trace(go.Scatter(x=df_sincronizado['Fecha'], y=df_sincronizado['Campo_Acumulado'] * 100, mode='markers+lines', name='Real de Campo (%)', marker=dict(color='#dc2626', size=8, symbol='diamond'), line=dict(color='#dc2626', width=2)))
                 fig_acum.add_trace(go.Scatter(x=df_sincronizado['Fecha'], y=df_sincronizado['Sim_Acumulado'] * 100, mode='lines', name='Simulado PREDWEEM (%)', line=dict(color='#166534', width=3, dash='dash')))
-                st.plotly_chart(fig_acum.update_layout(title="Llenado Cinético (Curvas Acumuladas Puras)", xaxis_title="Calendario", yaxis_title="Emergencia Acumulada (%)", height=430, hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)), width="stretch")
+                st.plotly_chart(fig_acum.update_layout(title="Llenado Cinético (Curvas Acumuladas Puras)", xaxis_title="Calendario", yaxis_title="Emergencia Acumulada (%)", height=430, hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)), use_container_width=True)
 
             with col_disp:
                 tab_flujos, tab_acum = st.tabs(["1:1 Flujos", "1:1 Acumulado"])
@@ -886,7 +752,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
                         text=df_sincronizado['Fecha'].dt.strftime('%d-%m-%Y'),
                         hovertemplate="<b>Intervalo fin: %{text}</b><br>Obs: %{x:.3f}<br>Sim: %{y:.3f}<extra></extra>"
                     ))
-                    st.plotly_chart(fig_1to1.update_layout(title="Ajuste de Flujos por Eventos Reales", xaxis_title="Observado Relativo", yaxis_title="Simulado Relativo", height=380, showlegend=False, margin=dict(t=40, b=0, l=0, r=0)), width="stretch")
+                    st.plotly_chart(fig_1to1.update_layout(title="Ajuste de Flujos por Eventos Reales", xaxis_title="Observado Relativo", yaxis_title="Simulado Relativo", height=380, showlegend=False, margin=dict(t=40, b=0, l=0, r=0)), use_container_width=True)
 
                 with tab_acum:
                     fig_1to1_ac = go.Figure()
@@ -898,7 +764,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
                         text=df_sincronizado['Fecha'].dt.strftime('%d-%m-%Y'),
                         hovertemplate="<b>%{text}</b><br>Obs Acum: %{x:.3f}<br>Sim Acum: %{y:.3f}<extra></extra>"
                     ))
-                    st.plotly_chart(fig_1to1_ac.update_layout(title=f"Ajuste Acumulado (R²: {r2_acum:.3f} | RMSE: {rmse_acum:.3f})", xaxis_title="Obs. Acumulada", yaxis_title="Sim. Acumulada", height=380, showlegend=False, margin=dict(t=40, b=0, l=0, r=0)), width="stretch")
+                    st.plotly_chart(fig_1to1_ac.update_layout(title=f"Ajuste Acumulado (R²: {r2_acum:.3f} | RMSE: {rmse_acum:.3f})", xaxis_title="Obs. Acumulada", yaxis_title="Sim. Acumulada", height=380, showlegend=False, margin=dict(t=40, b=0, l=0, r=0)), use_container_width=True)
 
     with tab2:
         st.header("💧 Dinámica Hídrica del Suelo (Lartigau)")
@@ -906,7 +772,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
         fig_hidrico.add_trace(go.Bar(x=df["Fecha"], y=df["Prec"], name='Lluvia Diaria (mm)', marker_color='#93c5fd', opacity=0.7))
         fig_hidrico.add_trace(go.Scatter(x=df["Fecha"], y=df["W_superficial"], name='Agua en Suelo (0-10cm)', mode='lines', line=dict(color='#0284c7', width=3), fill='tozeroy', fillcolor='rgba(2, 132, 199, 0.2)'))
         fig_hidrico.add_hline(y=w_max_val, line_dash="dot", line_color="#334155", annotation_text=f"Capacidad Máx. Suelo ({w_max_val} mm)", annotation_position="top left")
-        st.plotly_chart(fig_hidrico.update_layout(title="Precipitación vs. Retención Real de Humedad", xaxis_title="Fecha", yaxis_title="Milímetros (mm)", height=450, hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)), width="stretch")
+        st.plotly_chart(fig_hidrico.update_layout(title="Precipitación vs. Retención Real de Humedad", xaxis_title="Fecha", yaxis_title="Milímetros (mm)", height=450, hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)), use_container_width=True)
 
     with tab3:
         st.header("🔍 Clasificación DTW (Lartigau)")
@@ -926,7 +792,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
                 fp = go.Figure()
                 fp.add_trace(go.Scatter(x=JD_COM, y=cluster_model["curves_interp"][pred], name="Patrón Histórico", line=dict(dash='dash', color=cols.get(pred))))
                 fp.add_trace(go.Scatter(x=jd_grid, y=obs_norm * cluster_model["curves_interp"][pred].max(), name="2026", line=dict(color='black', width=3)))
-                st.plotly_chart(fp, width="stretch")
+                st.plotly_chart(fp, use_container_width=True)
             with c2:
                 nombres_patrones = {0: "🌾 Bimodal", 1: "🌱 Temprano", 2: "🍂 Tardío"}
                 st.success(f"### {nombres_patrones.get(pred, 'Desconocido')}")
@@ -935,76 +801,9 @@ if df_meteo_raw is not None and modelo_ann is not None:
             st.info("Datos insuficientes para clasificación por Dinámica Temporal (DTW).")
 
     with tab4:
-        st.subheader("🧪 Curvas de Respuesta Fisiológica")
+        st.subheader("🧪 Curva de Respuesta Fisiológica")
         x_temps = np.linspace(0, 45, 200)
-
-        fig_tt = go.Figure().add_trace(
-            go.Scatter(
-                x=x_temps,
-                y=[calculate_tt_scalar(t, t_base_val, t_opt_max, t_critica) for t in x_temps],
-                mode="lines",
-                name="Respuesta de tiempo térmico",
-                line=dict(color="#2563eb", width=4),
-                fill="tozeroy"
-            )
-        )
-        fig_tt.update_layout(
-            title="Respuesta no lineal para acumulación de grados-día",
-            xaxis_title="Temperatura media (°C)",
-            yaxis_title="Aporte térmico diario (°Cd)",
-            height=360
-        )
-        st.plotly_chart(fig_tt, width="stretch")
-
-        factor_temp_curva = factor_termoinhibicion_gaussiana(
-            x_temps,
-            t50=umbral_termoinhibicion,
-            sigma=sigma_termoinhibicion
-        )
-        fig_term = go.Figure().add_trace(
-            go.Scatter(
-                x=x_temps,
-                y=factor_temp_curva,
-                mode="lines",
-                name="Factor térmico",
-                line=dict(color="#b91c1c", width=4)
-            )
-        )
-        fig_term.add_vline(
-            x=umbral_termoinhibicion,
-            line_dash="dash",
-            annotation_text=f"T50 = {umbral_termoinhibicion:.1f} °C"
-        )
-        fig_term.update_layout(
-            title=f"Termoinhibición gaussiana acumulada (σ = {sigma_termoinhibicion:.1f} °C)",
-            xaxis_title="Temperatura media móvil de 15 días (°C)",
-            yaxis_title="Factor de aptitud térmica (0–1)",
-            yaxis=dict(range=[0, 1.05]),
-            height=360
-        )
-        st.plotly_chart(fig_term, width="stretch")
-
-        jd_curva = np.arange(1, 121)
-        factor_lat_curva = factor_salida_latencia_gaussiana(
-            jd_curva, jd50=float(jd50_latencia), sigma=float(sigma_latencia)
-        )
-        fig_lat = go.Figure().add_trace(
-            go.Scatter(
-                x=jd_curva, y=factor_lat_curva, mode="lines",
-                name="Salida de latencia", line=dict(color="#7c3aed", width=4)
-            )
-        )
-        fig_lat.add_hline(y=0.05, line_dash="dot", annotation_text="Umbral operativo 0,05")
-        fig_lat.add_vline(
-            x=jd50_latencia, line_dash="dash",
-            annotation_text=f"JD50 = {int(jd50_latencia)}"
-        )
-        fig_lat.update_layout(
-            title=f"Salida gaussiana acumulada de latencia (σ = {sigma_latencia:.1f} días)",
-            xaxis_title="Día juliano", yaxis_title="Factor de latencia (0–1)",
-            yaxis=dict(range=[0, 1.05]), height=360
-        )
-        st.plotly_chart(fig_lat, width="stretch")
+        st.plotly_chart(go.Figure().add_trace(go.Scatter(x=x_temps, y=[calculate_tt_scalar(t, t_base_val, t_opt_max, t_critica) for t in x_temps], mode='lines', line=dict(color='#2563eb', width=4), fill='tozeroy')), use_container_width=True)
 
     # REPORTE EN EXCEL
     output = io.BytesIO()
@@ -1017,24 +816,9 @@ if df_meteo_raw is not None and modelo_ann is not None:
                 'Métrica de Validación': ['PEC (%)', 'Lag Control (días)', 'Lead Time Control (días)', 'Pearson (Flujos)', 'NSE (Flujos Reales Evento)', 'KGE (Flujos)', 'RMSE (Acumulado)', 'R2 (Acumulado)', 'CCC (Acumulado)', 'Desfase T50 Global (días)', 'F1-Score (Coincidencia)', 'Exactitud Global', 'Hits (Aciertos)', 'Misses (Omisiones)', 'Falsos Positivos', 'Correctos Negativos', 'Desfase Primer Flujo (días)'],
                 'Valor': [pec, peak_lag, lead_time, pearson_r, nse_flujos, kge_flujos, rmse_acum, r2_acum, ccc_acum, desfase_t50, f1_score_coincidencia, exactitud_global, hits_val, misses_val, falsos_pos_val, correctos_neg_val, val_lag]
             }).to_excel(writer, sheet_name='Validacion_Estadistica', index=False)
-        pd.DataFrame({
-            'Configuracion': [
-                'T_Base', 'T_Optima', 'T_Critica', 'W_Max', 'Ke', 'Mod_Termico',
-                'T50_Termoinhibicion', 'Sigma_Termoinhibicion_C',
-                'JD50_Salida_Latencia', 'Sigma_Latencia_dias'
-            ],
-            'Valor': [
-                t_base_val, t_opt_max, t_critica, w_max_val, ke_val, mod_termico,
-                umbral_termoinhibicion, sigma_termoinhibicion,
-                jd50_latencia, sigma_latencia
-            ]
-        }).to_excel(writer, sheet_name='Bio_Params', index=False)
+        pd.DataFrame({'Configuracion': ['T_Base', 'T_Optima', 'T_Critica', 'W_Max', 'Ke', 'Mod_Termico', 'Umbral_Termoinhibicion'], 'Valor': [t_base_val, t_opt_max, t_critica, w_max_val, ke_val, mod_termico, umbral_termoinhibicion]}).to_excel(writer, sheet_name='Bio_Params', index=False)
 
-    st.sidebar.download_button(
-        "📥 Descargar Reporte Lartigau",
-        output.getvalue(),
-        "PREDWEEM_Integral_Lartigau_vK4_9_18_Gaussianas.xlsx"
-    )
+    st.sidebar.download_button("📥 Descargar Reporte Lartigau", output.getvalue(), "PREDWEEM_Integral_Lartigau_vK4_9_15.xlsx")
 
 else:
     st.info("👋 Bienvenido a PREDWEEM. Cargue los datos climáticos de Lartigau para comenzar.")
