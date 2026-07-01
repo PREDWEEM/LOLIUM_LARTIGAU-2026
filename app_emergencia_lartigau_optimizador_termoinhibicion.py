@@ -788,7 +788,7 @@ with col_tm:
         "Media T50 (°C)",
         min_value=15.0,
         max_value=35.0,
-        value=24.0,
+        value=23.5,
         step=0.5,
         help="Temperatura media móvil donde el factor térmico vale 0,50.",
     )
@@ -797,7 +797,7 @@ with col_ts:
         "Desvío σ (°C)",
         min_value=0.1,
         max_value=10.0,
-        value=2.0,
+        value=1.0,
         step=0.1,
         help="Controla cuán gradual es la transición entre aptitud e inhibición.",
     )
@@ -807,7 +807,7 @@ factor_min_inicio_termico = st.sidebar.slider(
     "Factor térmico mínimo para iniciar",
     min_value=0.05,
     max_value=0.95,
-    value=0.35,
+    value=0.50,
     step=0.05,
     help=(
         "La emergencia permanece en cero mientras el factor de aptitud "
