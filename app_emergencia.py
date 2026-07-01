@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 # ===============================================================
-# 🌾 PREDWEEM INTEGRAL vK4.9.15 — LOLIUM LARTIGAU 2026
+# 🌾 PREDWEEM INTEGRAL vK4.9.16 — LOLIUM LARTIGAU 2026
 # Actualización y Rigor Científico:
 # - ADAPTACIÓN LARTIGAU: Coordenadas fijas en -38.6166 para ET0 y balances.
 # - IDENTIDAD: PREDWEEM by GUILLERMO R. CHANTRE.
 # - LATENCIA INICIAL: Bloqueo estricto de emergencia los primeros 25 días del año.
+# - TERMOINHIBICIÓN CONTINUA: distribución normal acumulada complementaria,
+#   con media y desvío estándar ajustables desde la barra lateral.
 # - VALIDACIÓN DE FRECUENCIA VARIABLE: Reemplazo de remuestreo sintético por
 #   Integración Dinámica de Intervalo Real (Event-to-Event), apto para frecuencias de 7 a 21 días.
 # - OPTIMIZADOR 2D BIO-FÍSICO: Barrido de alta eficiencia sobre W_Max y Ke usando fechas de campo puras.
@@ -23,6 +25,7 @@ import time
 from datetime import timedelta
 from pathlib import Path
 import base64
+import math
 
 # ---------------------------------------------------------
 # 1. PANTALLA DE CARGA
@@ -151,6 +154,25 @@ def balance_hidrico_superficial(prec, et0, w_max=20.0, ke_suelo=0.4):
         evaporacion_real = et0[i] * ke_suelo
         w[i] = max(0.0, min(w_max, w[i-1] + prec[i] - evaporacion_real))
     return w
+
+
+def factor_termoinhibicion_normal(temperatura, media=24.0, desvio=2.0):
+    """Factor continuo de aptitud térmica basado en una distribución normal.
+
+    Se utiliza la función de supervivencia:
+        F = 1 - Phi((T - media) / desvio)
+
+    F vale 0,50 cuando T = media. Valores bajos de temperatura producen
+    factores próximos a 1 y valores altos producen factores próximos a 0.
+    """
+    if desvio <= 0:
+        raise ValueError("El desvío de termoinhibición debe ser mayor que cero.")
+
+    temperatura = np.asarray(temperatura, dtype=float)
+    z = (temperatura - float(media)) / (float(desvio) * np.sqrt(2.0))
+    erf_vectorizado = np.vectorize(math.erf, otypes=[float])
+    cdf_normal = 0.5 * (1.0 + erf_vectorizado(z))
+    return np.clip(1.0 - cdf_normal, 0.0, 1.0)
 
 class PracticalANNModel:
     def __init__(self, IW, bIW, LW, bLW):
@@ -311,7 +333,14 @@ def calcular_metricas_validacion_integral(df_sync, umbral_deteccion=0.05):
 # ---------------------------------------------------------
 # 4.5 MÓDULO OPTIMIZADOR 2D (CALIBRADO BIO-FÍSICO PURO)
 # ---------------------------------------------------------
-def optimizar_parametros_hidricos_2d(df_meteo, df_campo, modelo_ann, latitud_lartigau=-38.6166):
+def optimizar_parametros_hidricos_2d(
+    df_meteo,
+    df_campo,
+    modelo_ann,
+    latitud_lartigau=-38.6166,
+    media_termoinhibicion=24.0,
+    desvio_termoinhibicion=2.0,
+):
     df = df_meteo.copy()
     df['Fecha'] = pd.to_datetime(df['Fecha'])
     df["Julian_days"] = df["Fecha"].dt.dayofyear
@@ -347,8 +376,17 @@ def optimizar_parametros_hidricos_2d(df_meteo, df_campo, modelo_ann, latitud_lar
             df_sim['Lluvia_Recarga'] = (df_sim['Prec'] >= w_max).cummax()
             df_sim.loc[~df_sim['Lluvia_Recarga'], "EMERREL"] = 0.0
             
-            df_sim["Tmedia_10d"] = df_sim["Tmedia_aire"].rolling(window=10, min_periods=1).mean()
-            df_sim.loc[df_sim["Tmedia_10d"] >= 24.0, "EMERREL"] = 0.0
+            df_sim["Tmedia_10d"] = (
+                df_sim["Tmedia_aire"]
+                .rolling(window=10, min_periods=1)
+                .mean()
+            )
+            df_sim["Factor_Termoinhibicion"] = factor_termoinhibicion_normal(
+                df_sim["Tmedia_10d"].values,
+                media=media_termoinhibicion,
+                desvio=desvio_termoinhibicion,
+            )
+            df_sim["EMERREL"] *= df_sim["Factor_Termoinhibicion"]
             
             df_sync = sincronizar_intervalos_variables(df_sim, df_campo, col_fecha, col_plm2)
             metricas = calcular_metricas_validacion_integral(df_sync)
@@ -418,8 +456,26 @@ st.sidebar.image("https://raw.githubusercontent.com/PREDWEEM/LOLIUM_LARTIGAU-202
 st.sidebar.markdown("## ⚙️ 2. Fisiología y Logística")
 umbral_er = st.sidebar.slider("Umbral Alerta Temprana", 0.001, 0.80, 0.005)
 
-st.sidebar.markdown("**Ruptura de Dormición Estival**")
-umbral_termoinhibicion = st.sidebar.number_input("Umbral Termoinhibición (°C)", 15.0, 35.0, 24.0, 0.5)
+st.sidebar.markdown("**Termoinhibición — distribución normal**")
+col_tm, col_ts = st.sidebar.columns(2)
+with col_tm:
+    media_termoinhibicion = st.number_input(
+        "Media T50 (°C)",
+        min_value=15.0,
+        max_value=35.0,
+        value=24.0,
+        step=0.5,
+        help="Temperatura media móvil donde el factor térmico vale 0,50.",
+    )
+with col_ts:
+    desvio_termoinhibicion = st.number_input(
+        "Desvío σ (°C)",
+        min_value=0.1,
+        max_value=10.0,
+        value=2.0,
+        step=0.1,
+        help="Controla cuán gradual es la transición entre aptitud e inhibición.",
+    )
 
 st.sidebar.markdown("**Ruptura de Dormición (Otoño)**")
 umbral_choque_hidrico = st.sidebar.slider("Choque Hídrico 3 días (mm)", 20.0, 100.0, 30.0)
@@ -457,7 +513,14 @@ with st.sidebar.expander("🛠️ Modo Dev: Calibrador Bio-Físico 2D", expanded
                 col_fecha_opt = 'FECHA' if 'FECHA' in df_campo_opt.columns else df_campo_opt.columns[0]
                 df_campo_opt[col_fecha_opt] = pd.to_datetime(df_campo_opt[col_fecha_opt])
                 
-                tabla_optima = optimizar_parametros_hidricos_2d(df_meteo_opt, df_campo_opt, modelo_ann, latitud_lartigau=-38.6166)
+                tabla_optima = optimizar_parametros_hidricos_2d(
+                    df_meteo_opt,
+                    df_campo_opt,
+                    modelo_ann,
+                    latitud_lartigau=-38.6166,
+                    media_termoinhibicion=media_termoinhibicion,
+                    desvio_termoinhibicion=desvio_termoinhibicion,
+                )
                 
             st.success("¡Barrido completado de forma rigurosa!")
             st.dataframe(tabla_optima.head(15))
@@ -516,10 +579,19 @@ if df_meteo_raw is not None and modelo_ann is not None:
     df['Lluvia_Recarga'] = (df['Prec'] >= w_max_val).cummax()
     df.loc[~df['Lluvia_Recarga'], "EMERREL"] = 0.0
 
-    # 4. Escudo Termofisiológico
+    # 4. Termoinhibición continua mediante distribución normal acumulada
     df["Tmedia"] = df["Tmedia_aire"]
-    df["Tmedia_10d"] = df["Tmedia"].rolling(window=10, min_periods=1).mean()
-    df.loc[df["Tmedia_10d"] >= umbral_termoinhibicion, "EMERREL"] = 0.0
+    df["Tmedia_10d"] = (
+        df["Tmedia"]
+        .rolling(window=10, min_periods=1)
+        .mean()
+    )
+    df["Factor_Termoinhibicion"] = factor_termoinhibicion_normal(
+        df["Tmedia_10d"].values,
+        media=media_termoinhibicion,
+        desvio=desvio_termoinhibicion,
+    )
+    df["EMERREL"] *= df["Factor_Termoinhibicion"]
 
     # 5. BLOQUEO FINAL ESTRICTO: Latencia Temprana (Primeros 25 días del año)
     df.loc[df["Julian_days"] <= 25, "EMERREL"] = 0.0
@@ -801,9 +873,65 @@ if df_meteo_raw is not None and modelo_ann is not None:
             st.info("Datos insuficientes para clasificación por Dinámica Temporal (DTW).")
 
     with tab4:
-        st.subheader("🧪 Curva de Respuesta Fisiológica")
+        st.subheader("🧪 Curvas de Respuesta Fisiológica")
         x_temps = np.linspace(0, 45, 200)
-        st.plotly_chart(go.Figure().add_trace(go.Scatter(x=x_temps, y=[calculate_tt_scalar(t, t_base_val, t_opt_max, t_critica) for t in x_temps], mode='lines', line=dict(color='#2563eb', width=4), fill='tozeroy')), use_container_width=True)
+
+        fig_tt = go.Figure()
+        fig_tt.add_trace(
+            go.Scatter(
+                x=x_temps,
+                y=[
+                    calculate_tt_scalar(t, t_base_val, t_opt_max, t_critica)
+                    for t in x_temps
+                ],
+                mode="lines",
+                name="Tiempo térmico diario",
+                line=dict(color="#2563eb", width=4),
+                fill="tozeroy",
+            )
+        )
+        fig_tt.update_layout(
+            title="Respuesta de tiempo térmico",
+            xaxis_title="Temperatura (°C)",
+            yaxis_title="Grados-día efectivos",
+            height=380,
+        )
+        st.plotly_chart(fig_tt, use_container_width=True)
+
+        factor_normal_plot = factor_termoinhibicion_normal(
+            x_temps,
+            media=media_termoinhibicion,
+            desvio=desvio_termoinhibicion,
+        )
+        fig_term = go.Figure()
+        fig_term.add_trace(
+            go.Scatter(
+                x=x_temps,
+                y=factor_normal_plot,
+                mode="lines",
+                name="Factor de aptitud térmica",
+                line=dict(color="#b91c1c", width=4),
+                fill="tozeroy",
+            )
+        )
+        fig_term.add_vline(
+            x=media_termoinhibicion,
+            line_dash="dash",
+            line_color="#475569",
+            annotation_text=f"Media T50 = {media_termoinhibicion:.1f} °C",
+        )
+        fig_term.update_layout(
+            title=(
+                "Termoinhibición normal acumulada "
+                f"(media={media_termoinhibicion:.1f} °C; "
+                f"σ={desvio_termoinhibicion:.1f} °C)"
+            ),
+            xaxis_title="Temperatura media móvil de 10 días (°C)",
+            yaxis_title="Factor de aptitud térmica (0–1)",
+            yaxis=dict(range=[0, 1.02]),
+            height=380,
+        )
+        st.plotly_chart(fig_term, use_container_width=True)
 
     # REPORTE EN EXCEL
     output = io.BytesIO()
@@ -816,9 +944,30 @@ if df_meteo_raw is not None and modelo_ann is not None:
                 'Métrica de Validación': ['PEC (%)', 'Lag Control (días)', 'Lead Time Control (días)', 'Pearson (Flujos)', 'NSE (Flujos Reales Evento)', 'KGE (Flujos)', 'RMSE (Acumulado)', 'R2 (Acumulado)', 'CCC (Acumulado)', 'Desfase T50 Global (días)', 'F1-Score (Coincidencia)', 'Exactitud Global', 'Hits (Aciertos)', 'Misses (Omisiones)', 'Falsos Positivos', 'Correctos Negativos', 'Desfase Primer Flujo (días)'],
                 'Valor': [pec, peak_lag, lead_time, pearson_r, nse_flujos, kge_flujos, rmse_acum, r2_acum, ccc_acum, desfase_t50, f1_score_coincidencia, exactitud_global, hits_val, misses_val, falsos_pos_val, correctos_neg_val, val_lag]
             }).to_excel(writer, sheet_name='Validacion_Estadistica', index=False)
-        pd.DataFrame({'Configuracion': ['T_Base', 'T_Optima', 'T_Critica', 'W_Max', 'Ke', 'Mod_Termico', 'Umbral_Termoinhibicion'], 'Valor': [t_base_val, t_opt_max, t_critica, w_max_val, ke_val, mod_termico, umbral_termoinhibicion]}).to_excel(writer, sheet_name='Bio_Params', index=False)
+        pd.DataFrame({
+            'Configuracion': [
+                'T_Base',
+                'T_Optima',
+                'T_Critica',
+                'W_Max',
+                'Ke',
+                'Mod_Termico',
+                'Media_Termoinhibicion_T50',
+                'Desvio_Termoinhibicion_Sigma',
+            ],
+            'Valor': [
+                t_base_val,
+                t_opt_max,
+                t_critica,
+                w_max_val,
+                ke_val,
+                mod_termico,
+                media_termoinhibicion,
+                desvio_termoinhibicion,
+            ],
+        }).to_excel(writer, sheet_name='Bio_Params', index=False)
 
-    st.sidebar.download_button("📥 Descargar Reporte Lartigau", output.getvalue(), "PREDWEEM_Integral_Lartigau_vK4_9_15.xlsx")
+    st.sidebar.download_button("📥 Descargar Reporte Lartigau", output.getvalue(), "PREDWEEM_Integral_Lartigau_vK4_9_16_Normal.xlsx")
 
 else:
     st.info("👋 Bienvenido a PREDWEEM. Cargue los datos climáticos de Lartigau para comenzar.")
