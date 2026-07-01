@@ -1,3 +1,19 @@
+# -*- coding: utf-8 -*-
+# ===============================================================
+# 🌾 PREDWEEM INTEGRAL vK4.9.15 — LOLIUM LARTIGAU 2026
+# Actualización y Rigor Científico:
+# - ADAPTACIÓN LARTIGAU: Coordenadas fijas en -38.6166 para ET0 y balances.
+# - IDENTIDAD: PREDWEEM by GUILLERMO R. CHANTRE.
+# - LATENCIA INICIAL: Bloqueo estricto de emergencia los primeros 25 días del año.
+# - LÓGICA DE BYPASS DUAL: 
+#      1. Ruptura Térmica (Lluvia > 30mm + Tmedia_15d < 24°C) para otoño.
+#      2. Ruptura Masiva (Lluvia > 45mm) para captar eventos extremos como Feb 2025.
+# - VALIDACIÓN DE FRECUENCIA VARIABLE: Integración Dinámica de Intervalo Real (Event-to-Event).
+# - OPTIMIZADOR 2D BIO-FÍSICO: Barrido de alta eficiencia sobre W_Max y Ke usando fechas de campo puras.
+# - COINCIDENCIA OPERATIVA: Métricas F1-Score, Exactitud Global y Matriz de Confusión interactiva.
+# - UX DINÁMICA: Sombreados de fondo basados en las fechas reales de muestreo.
+# ===============================================================
+
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -333,7 +349,7 @@ def optimizar_parametros_hidricos_2d(df_meteo, df_campo, modelo_ann, latitud_lar
             df_sim.loc[~df_sim['Lluvia_Recarga'], "EMERREL"] = 0.0
             
             # --- Ajuste Optimizador: Mayor inercia térmica (15 días) ---
-            df_sim["Tmedia_15d"] = df_sim["Tmedia_aire"].rolling(window=20, min_periods=1).mean()
+            df_sim["Tmedia_15d"] = df_sim["Tmedia_aire"].rolling(window=15, min_periods=1).mean()
             df_sim.loc[df_sim["Tmedia_15d"] >= 24.0, "EMERREL"] = 0.0
             
             df_sync = sincronizar_intervalos_variables(df_sim, df_campo, col_fecha, col_plm2)
@@ -483,16 +499,23 @@ if df_meteo_raw is not None and modelo_ann is not None:
         df_campo['Campo_Normalizado'] = df_campo[col_plm2] / max_plm2 if max_plm2 > 0 else 0
 
     # ----------------------------------------------------
-    # CORRECCIÓN: Lógica Fisiológica Ordenada
+    # CORRECCIÓN: Lógica Fisiológica Ordenada y BYPASS DUAL
     # ----------------------------------------------------
     # 1. Predicción Neural Base
     X = df[["Julian_days", "TMAX_suelo", "TMIN_suelo", "Prec"]].to_numpy(float)
     emerrel_raw, _ = modelo_ann.predict(X)
     df["EMERREL"] = np.maximum(emerrel_raw, 0.0)
 
-    # 2. Bypass Ruptura Temprana Condicionado a Quiebre Térmico (< 22°C) y Posterior a Latencia
+    # 2. Lógica BYPASS DUAL (Condicionado y Extremo) - Estrictamente después de Latencia (día 25)
     df["Prec_3d"] = df["Prec"].rolling(window=3, min_periods=1).sum()
-    mask_ruptura = (df["Julian_days"] > 25) & (df["Julian_days"] <= 110) & (df["Prec_3d"] >= umbral_choque_hidrico) & (df["Tmedia_15d"] < 22.0)
+    
+    # Bypass A: Lluvias masivas rompen dormición a la fuerza (> 1.5x umbral, es decir, ej: > 45mm)
+    mask_ruptura_masiva = (df["Julian_days"] > 25) & (df["Julian_days"] <= 110) & (df["Prec_3d"] >= (umbral_choque_hidrico * 1.5))
+    
+    # Bypass B: Lluvias moderadas (> 30mm) requieren que la temperatura ya haya bajado (< 24°C)
+    mask_ruptura_termica = (df["Julian_days"] > 25) & (df["Julian_days"] <= 110) & (df["Prec_3d"] >= umbral_choque_hidrico) & (df["Tmedia_15d"] < umbral_termoinhibicion)
+    
+    mask_ruptura = mask_ruptura_masiva | mask_ruptura_termica
     df.loc[mask_ruptura, "EMERREL"] = np.maximum(df.loc[mask_ruptura, "EMERREL"], 1.0)
 
     # 3. Balance Hídrico Superficial (Lartigau)
@@ -806,7 +829,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
             }).to_excel(writer, sheet_name='Validacion_Estadistica', index=False)
         pd.DataFrame({'Configuracion': ['T_Base', 'T_Optima', 'T_Critica', 'W_Max', 'Ke', 'Mod_Termico', 'Umbral_Termoinhibicion'], 'Valor': [t_base_val, t_opt_max, t_critica, w_max_val, ke_val, mod_termico, umbral_termoinhibicion]}).to_excel(writer, sheet_name='Bio_Params', index=False)
 
-    st.sidebar.download_button("📥 Descargar Reporte Lartigau", output.getvalue(), "PREDWEEM_Integral_Lartigau_vK4_9_15.xlsx")
+    st.sidebar.download_button("📥 Descargar Reporte Lartigau", output.getvalue(), "PREDWEEM_Integral_Lartigau_vK4_9_15_Dual.xlsx")
 
 else:
     st.info("👋 Bienvenido a PREDWEEM. Cargue los datos climáticos de Lartigau para comenzar.")
