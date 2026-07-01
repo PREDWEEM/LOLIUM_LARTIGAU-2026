@@ -1,19 +1,3 @@
-# -*- coding: utf-8 -*-
-# ===============================================================
-# 🌾 PREDWEEM INTEGRAL vK4.9.15 — LOLIUM LARTIGAU 2026
-# Actualización y Rigor Científico:
-# - ADAPTACIÓN LARTIGAU: Coordenadas fijas en -38.6166 para ET0 y balances.
-# - IDENTIDAD: PREDWEEM by GUILLERMO R. CHANTRE.
-# - LATENCIA INICIAL: Bloqueo estricto de emergencia los primeros 25 días del año.
-# - AJUSTE ESTIVAL: Mayor inercia térmica (15 días) y Bypass Hídrico estricto (<22°C).
-# - VALIDACIÓN DE FRECUENCIA VARIABLE: Reemplazo de remuestreo sintético por
-#   Integración Dinámica de Intervalo Real (Event-to-Event), apto para frecuencias de 7 a 21 días.
-# - OPTIMIZADOR 2D BIO-FÍSICO: Barrido de alta eficiencia sobre W_Max y Ke usando fechas de campo puras.
-# - COINCIDENCIA OPERATIVA: Métricas F1-Score, Exactitud Global y Matriz de Confusión interactiva.
-# - SINCRONÍA DE INICIO: Evaluación del desfase temporal del primer flujo (Gatillo de DGA).
-# - UX DINÁMICA: Sombreados de fondo basados en las fechas reales de muestreo.
-# ===============================================================
-
 import streamlit as st
 import numpy as np
 import pandas as pd
