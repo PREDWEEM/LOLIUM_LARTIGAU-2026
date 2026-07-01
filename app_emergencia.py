@@ -367,7 +367,7 @@ def optimizar_parametros_hidricos_2d(
             df_sim.loc[~df_sim['Lluvia_Recarga'], "EMERREL"] = 0.0
             
             # --- Termoinhibición continua con inercia térmica de 15 días ---
-            df_sim["Tmedia_15d"] = df_sim["Tmedia_aire"].rolling(window=15, min_periods=1).mean()
+            df_sim["Tmedia_15d"] = df_sim["Tmedia_aire"].rolling(window=10, min_periods=1).mean()
             df_sim["Factor_Termico"] = factor_termoinhibicion_logistica(
                 df_sim["Tmedia_15d"].values,
                 t50=t50_termoinhibicion,
