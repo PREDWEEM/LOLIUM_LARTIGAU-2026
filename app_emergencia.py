@@ -522,7 +522,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
     df.loc[df["Tmedia_10d"] >= umbral_termoinhibicion, "EMERREL"] = 0.0
 
     # 5. BLOQUEO FINAL ESTRICTO: Latencia Temprana (Primeros 25 días del año)
-    df.loc[df["Julian_days"] <= 25, "EMERREL"] = 0.0
+    df.loc[df["Julian_days"] <= 45, "EMERREL"] = 0.0
     # ----------------------------------------------------
 
     df["DG"] = df["Tmedia"].apply(lambda x: calculate_tt_scalar(x, t_base_val, t_opt_max, t_critica))
