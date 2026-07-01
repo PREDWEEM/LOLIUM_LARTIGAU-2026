@@ -510,7 +510,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
     df["Prec_3d"] = df["Prec"].rolling(window=3, min_periods=1).sum()
     
     # Bypass A: Lluvias masivas rompen dormición a la fuerza (> 1.5x umbral, es decir, ej: > 45mm)
-    mask_ruptura_masiva = (df["Julian_days"] > 25) & (df["Julian_days"] <= 110) & (df["Prec_3d"] >= (umbral_choque_hidrico * 1.5))
+    mask_ruptura_masiva = (df["Julian_days"] > 25) & (df["Julian_days"] <= 110) & (df["Prec_3d"] >= (umbral_choque_hidrico * 1.0))
     
     # Bypass B: Lluvias moderadas (> 30mm) requieren que la temperatura ya haya bajado (< 24°C)
     mask_ruptura_termica = (df["Julian_days"] > 25) & (df["Julian_days"] <= 110) & (df["Prec_3d"] >= umbral_choque_hidrico) & (df["Tmedia_15d"] < umbral_termoinhibicion)
