@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 # ===============================================================
-# 🌾 PREDWEEM INTEGRAL vK4.9.15 — LOLIUM LARTIGAU 2026
+# 🌾 PREDWEEM INTEGRAL vK4.9.16 — LOLIUM LARTIGAU 2026
 # Actualización y Rigor Científico:
 # - ADAPTACIÓN LARTIGAU: Coordenadas fijas en -38.6166 para ET0 y balances.
 # - IDENTIDAD: PREDWEEM by GUILLERMO R. CHANTRE.
 # - LATENCIA INICIAL: Bloqueo estricto de emergencia los primeros 25 días del año.
-# - LÓGICA DE BYPASS DUAL: 
-#      1. Ruptura Térmica (Lluvia > 30mm + Tmedia_15d < 24°C) para otoño.
-#      2. Ruptura Masiva (Lluvia > 45mm) para captar eventos extremos como Feb 2025.
+# - TERMOINHIBICIÓN CONTINUA: función logística sobre Tmedia_15d, con T50 y pendiente k calibrables.
+# - LÓGICA DE BYPASS DUAL:
+#      1. Ruptura Térmica (lluvia + descenso térmico) para otoño.
+#      2. Ruptura Masiva para captar eventos extremos como Feb 2025.
 # - VALIDACIÓN DE FRECUENCIA VARIABLE: Integración Dinámica de Intervalo Real (Event-to-Event).
 # - OPTIMIZADOR 2D BIO-FÍSICO: Barrido de alta eficiencia sobre W_Max y Ke usando fechas de campo puras.
 # - COINCIDENCIA OPERATIVA: Métricas F1-Score, Exactitud Global y Matriz de Confusión interactiva.
@@ -152,6 +153,20 @@ def balance_hidrico_superficial(prec, et0, w_max=20.0, ke_suelo=0.4):
         evaporacion_real = et0[i] * ke_suelo
         w[i] = max(0.0, min(w_max, w[i-1] + prec[i] - evaporacion_real))
     return w
+
+
+def factor_termoinhibicion_logistica(temperatura, t50=25.5, k=1.2):
+    """Factor continuo de aptitud térmica entre 0 y 1.
+
+    t50: temperatura media móvil donde la emergencia potencial queda al 50 %.
+    k: controla la pendiente; valores bajos producen una transición más abrupta.
+    """
+    if k <= 0:
+        raise ValueError("La pendiente k de termoinhibición debe ser mayor que 0.")
+
+    temperatura = np.asarray(temperatura, dtype=float)
+    exponente = np.clip((temperatura - t50) / k, -60.0, 60.0)
+    return 1.0 / (1.0 + np.exp(exponente))
 
 class PracticalANNModel:
     def __init__(self, IW, bIW, LW, bLW):
@@ -312,7 +327,10 @@ def calcular_metricas_validacion_integral(df_sync, umbral_deteccion=0.05):
 # ---------------------------------------------------------
 # 4.5 MÓDULO OPTIMIZADOR 2D (CALIBRADO BIO-FÍSICO PURO)
 # ---------------------------------------------------------
-def optimizar_parametros_hidricos_2d(df_meteo, df_campo, modelo_ann, latitud_lartigau=-38.6166):
+def optimizar_parametros_hidricos_2d(
+    df_meteo, df_campo, modelo_ann, latitud_lartigau=-38.6166,
+    t50_termoinhibicion=25.5, k_termoinhibicion=1.2
+):
     df = df_meteo.copy()
     df['Fecha'] = pd.to_datetime(df['Fecha'])
     df["Julian_days"] = df["Fecha"].dt.dayofyear
@@ -348,9 +366,14 @@ def optimizar_parametros_hidricos_2d(df_meteo, df_campo, modelo_ann, latitud_lar
             df_sim['Lluvia_Recarga'] = (df_sim['Prec'] >= w_max).cummax()
             df_sim.loc[~df_sim['Lluvia_Recarga'], "EMERREL"] = 0.0
             
-            # --- Ajuste Optimizador: Mayor inercia térmica (15 días) ---
+            # --- Termoinhibición continua con inercia térmica de 15 días ---
             df_sim["Tmedia_15d"] = df_sim["Tmedia_aire"].rolling(window=15, min_periods=1).mean()
-            df_sim.loc[df_sim["Tmedia_15d"] >= 24.0, "EMERREL"] = 0.0
+            df_sim["Factor_Termico"] = factor_termoinhibicion_logistica(
+                df_sim["Tmedia_15d"].values,
+                t50=t50_termoinhibicion,
+                k=k_termoinhibicion
+            )
+            df_sim["EMERREL"] *= df_sim["Factor_Termico"]
             
             df_sync = sincronizar_intervalos_variables(df_sim, df_campo, col_fecha, col_plm2)
             metricas = calcular_metricas_validacion_integral(df_sync)
@@ -415,13 +438,22 @@ df_meteo_raw = load_data(archivo_meteo, "meteo_daily")
 df_campo_raw = load_data(archivo_campo, "LARTIGAU_campo")
 
 # --- SIDEBAR ---
-st.sidebar.image("https://raw.githubusercontent.com/PREDWEEM/LOLIUM_LARTIGAU-2026/main/logo.png", use_container_width=True)
+st.sidebar.image("https://raw.githubusercontent.com/PREDWEEM/LOLIUM_LARTIGAU-2026/main/logo.png", width="stretch")
 
 st.sidebar.markdown("## ⚙️ 2. Fisiología y Logística")
 umbral_er = st.sidebar.slider("Umbral Alerta Temprana", 0.001, 0.80, 0.005)
 
-st.sidebar.markdown("**Ruptura de Dormición Estival**")
-umbral_termoinhibicion = st.sidebar.number_input("Umbral Termoinhibición (°C)", 15.0, 35.0, 24.0, 0.5)
+st.sidebar.markdown("**Termoinhibición continua**")
+umbral_termoinhibicion = st.sidebar.number_input(
+    "T50 de termoinhibición (°C)",
+    min_value=15.0, max_value=35.0, value=25.5, step=0.5,
+    help="Temperatura media móvil de 15 días donde el factor térmico vale 0,50."
+)
+pendiente_termoinhibicion = st.sidebar.number_input(
+    "Pendiente logística k (°C)",
+    min_value=0.2, max_value=5.0, value=1.2, step=0.1,
+    help="Valores bajos generan una transición más abrupta; valores altos, una inhibición más gradual."
+)
 
 st.sidebar.markdown("**Ruptura de Dormición (Otoño)**")
 umbral_choque_hidrico = st.sidebar.slider("Choque Hídrico 3 días (mm)", 20.0, 100.0, 30.0)
@@ -459,7 +491,14 @@ with st.sidebar.expander("🛠️ Modo Dev: Calibrador Bio-Físico 2D", expanded
                 col_fecha_opt = 'FECHA' if 'FECHA' in df_campo_opt.columns else df_campo_opt.columns[0]
                 df_campo_opt[col_fecha_opt] = pd.to_datetime(df_campo_opt[col_fecha_opt])
                 
-                tabla_optima = optimizar_parametros_hidricos_2d(df_meteo_opt, df_campo_opt, modelo_ann, latitud_lartigau=-38.6166)
+                tabla_optima = optimizar_parametros_hidricos_2d(
+                    df_meteo_opt,
+                    df_campo_opt,
+                    modelo_ann,
+                    latitud_lartigau=-38.6166,
+                    t50_termoinhibicion=umbral_termoinhibicion,
+                    k_termoinhibicion=pendiente_termoinhibicion
+                )
                 
             st.success("¡Barrido completado de forma rigurosa!")
             st.dataframe(tabla_optima.head(15))
@@ -512,7 +551,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
     # Bypass A: Lluvias masivas rompen dormición a la fuerza (> 1.5x umbral, es decir, ej: > 45mm)
     mask_ruptura_masiva = (df["Julian_days"] > 25) & (df["Julian_days"] <= 110) & (df["Prec_3d"] >= (umbral_choque_hidrico * 1.5))
     
-    # Bypass B: Lluvias moderadas (> 30mm) requieren que la temperatura ya haya bajado (< 24°C)
+    # Bypass B: lluvias moderadas requieren que la temperatura media móvil esté por debajo de T50
     mask_ruptura_termica = (df["Julian_days"] > 25) & (df["Julian_days"] <= 110) & (df["Prec_3d"] >= umbral_choque_hidrico) & (df["Tmedia_15d"] < umbral_termoinhibicion)
     
     mask_ruptura = mask_ruptura_masiva | mask_ruptura_termica
@@ -529,8 +568,14 @@ if df_meteo_raw is not None and modelo_ann is not None:
     df['Lluvia_Recarga'] = (df['Prec'] >= w_max_val).cummax()
     df.loc[~df['Lluvia_Recarga'], "EMERREL"] = 0.0
 
-    # 4. Escudo Termofisiológico (Inercia 15 días)
-    df.loc[df["Tmedia_15d"] >= umbral_termoinhibicion, "EMERREL"] = 0.0
+    # 4. Termoinhibición continua (Inercia térmica de 15 días)
+    #    La ANN aporta la emergencia potencial y este factor la modula gradualmente.
+    df["Factor_Termico"] = factor_termoinhibicion_logistica(
+        df["Tmedia_15d"].values,
+        t50=umbral_termoinhibicion,
+        k=pendiente_termoinhibicion
+    )
+    df["EMERREL"] *= df["Factor_Termico"]
 
     # 5. BLOQUEO FINAL ESTRICTO: Latencia Temprana (Primeros 25 días del año)
     df.loc[df["Julian_days"] <= 25, "EMERREL"] = 0.0
@@ -628,7 +673,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
 
     # FRONT-END VISUAL
     colorscale_hard = [[0.0, "green"], [0.01, "green"], [0.02, "red"], [1.0, "red"]]
-    st.plotly_chart(go.Figure(data=go.Heatmap(z=[df["EMERREL"].values], x=df["Fecha"], y=["Emergencia"], colorscale=colorscale_hard, zmin=0, zmax=1, showscale=False)).update_layout(height=120, margin=dict(t=30, b=0, l=10, r=10), title="Mapa de Riesgo Temporal (Tasa Diaria)"), use_container_width=True)
+    st.plotly_chart(go.Figure(data=go.Heatmap(z=[df["EMERREL"].values], x=df["Fecha"], y=["Emergencia"], colorscale=colorscale_hard, zmin=0, zmax=1, showscale=False)).update_layout(height=120, margin=dict(t=30, b=0, l=10, r=10), title="Mapa de Riesgo Temporal (Tasa Diaria)"), width="stretch")
 
     tab1, tab2, tab3, tab4 = st.tabs(["📊 MONITOR DE DECISIÓN", "💧 PRECIPITACIONES Y SUELO", "📈 ANÁLISIS ESTRATÉGICO", "🧪 BIO-CALIBRACIÓN"])
 
@@ -666,7 +711,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
                 <p style="color:#1e293b; font-weight:bold; margin-top:0; margin-bottom:10px;">🧩 Matriz de Confusión (Intervalos de Monitoreo)</p>
                 <table style="width:100%; text-align:center; border-collapse: collapse; font-family:sans-serif;">
                     <tr>
-                        <th style="border-bottom:2px solid #e2e8f0; padding:10px; color:#475569; width:34%;">Realidad ⬇ \ Simulación ➡</th>
+                        <th style="border-bottom:2px solid #e2e8f0; padding:10px; color:#475569; width:34%;">Realidad ⬇ / Simulación ➡</th>
                         <th style="border-bottom:2px solid #e2e8f0; padding:10px; background-color:#eff6ff; color:#1e3a8a; width:33%;">🚨 Modelo Predice FLUJO</th>
                         <th style="border-bottom:2px solid #e2e8f0; padding:10px; background-color:#f8fafc; color:#475569; width:33%;">💤 Modelo Predice INACTIVO</th>
                     </tr>
@@ -727,7 +772,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
                     )
 
             fig_emer.update_layout(title="Dinámica Fisiológica de Emergencia (Bloques según Intervalos Reales)", yaxis_title="Log10(Emergencia + 0.01)", height=450, hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-            st.plotly_chart(fig_emer, use_container_width=True)
+            st.plotly_chart(fig_emer, width="stretch")
 
             if fecha_inicio_ventana:
                 st.success(f"📅 **Inicio de Conteo Térmico:** {fecha_inicio_ventana.strftime('%d-%m-%Y')} (Detección biológica inicial)")
@@ -737,7 +782,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
 
         with col_gauge:
             max_axis = dga_critico * 1.2
-            st.plotly_chart(go.Figure().add_trace(go.Indicator(mode="gauge+number", value=dga_hoy, domain={'x': [0, 1], 'y': [0, 1]}, title={'text': "<b>TT POST-EMERGENCIA (°Cd)</b>", 'font': {'size': 18}}, gauge={'axis': {'range': [None, max_axis]}, 'bar': {'color': "#1e293b", 'thickness': 0.3}, 'steps': [{'range': [0, dga_optimo], 'color': "#4ade80"}, {'range': [dga_optimo, dga_critico], 'color': "#facc15"}, {'range': [dga_critico, max_axis], 'color': "#f87171"}], 'threshold': {'line': {'color': "#2563eb", 'width': 6}, 'thickness': 0.8, 'value': dga_7dias}})).add_annotation(x=0.5, y=-0.1, text=f"{msg_estado}<br>Pronóstico +7d: <b>{dga_7dias:.1f} °Cd</b>", showarrow=False, font=dict(size=14, color="#1e3a8a"), align="center").update_layout(height=350, margin=dict(t=80, b=50, l=30, r=30)), use_container_width=True)
+            st.plotly_chart(go.Figure().add_trace(go.Indicator(mode="gauge+number", value=dga_hoy, domain={'x': [0, 1], 'y': [0, 1]}, title={'text': "<b>TT POST-EMERGENCIA (°Cd)</b>", 'font': {'size': 18}}, gauge={'axis': {'range': [None, max_axis]}, 'bar': {'color': "#1e293b", 'thickness': 0.3}, 'steps': [{'range': [0, dga_optimo], 'color': "#4ade80"}, {'range': [dga_optimo, dga_critico], 'color': "#facc15"}, {'range': [dga_critico, max_axis], 'color': "#f87171"}], 'threshold': {'line': {'color': "#2563eb", 'width': 6}, 'thickness': 0.8, 'value': dga_7dias}})).add_annotation(x=0.5, y=-0.1, text=f"{msg_estado}<br>Pronóstico +7d: <b>{dga_7dias:.1f} °Cd</b>", showarrow=False, font=dict(size=14, color="#1e3a8a"), align="center").update_layout(height=350, margin=dict(t=80, b=50, l=30, r=30)), width="stretch")
 
         if df_campo is not None and not df_sincronizado.empty:
             st.markdown("---")
@@ -748,7 +793,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
                 fig_acum = go.Figure()
                 fig_acum.add_trace(go.Scatter(x=df_sincronizado['Fecha'], y=df_sincronizado['Campo_Acumulado'] * 100, mode='markers+lines', name='Real de Campo (%)', marker=dict(color='#dc2626', size=8, symbol='diamond'), line=dict(color='#dc2626', width=2)))
                 fig_acum.add_trace(go.Scatter(x=df_sincronizado['Fecha'], y=df_sincronizado['Sim_Acumulado'] * 100, mode='lines', name='Simulado PREDWEEM (%)', line=dict(color='#166534', width=3, dash='dash')))
-                st.plotly_chart(fig_acum.update_layout(title="Llenado Cinético (Curvas Acumuladas Puras)", xaxis_title="Calendario", yaxis_title="Emergencia Acumulada (%)", height=430, hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)), use_container_width=True)
+                st.plotly_chart(fig_acum.update_layout(title="Llenado Cinético (Curvas Acumuladas Puras)", xaxis_title="Calendario", yaxis_title="Emergencia Acumulada (%)", height=430, hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)), width="stretch")
 
             with col_disp:
                 tab_flujos, tab_acum = st.tabs(["1:1 Flujos", "1:1 Acumulado"])
@@ -763,7 +808,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
                         text=df_sincronizado['Fecha'].dt.strftime('%d-%m-%Y'),
                         hovertemplate="<b>Intervalo fin: %{text}</b><br>Obs: %{x:.3f}<br>Sim: %{y:.3f}<extra></extra>"
                     ))
-                    st.plotly_chart(fig_1to1.update_layout(title="Ajuste de Flujos por Eventos Reales", xaxis_title="Observado Relativo", yaxis_title="Simulado Relativo", height=380, showlegend=False, margin=dict(t=40, b=0, l=0, r=0)), use_container_width=True)
+                    st.plotly_chart(fig_1to1.update_layout(title="Ajuste de Flujos por Eventos Reales", xaxis_title="Observado Relativo", yaxis_title="Simulado Relativo", height=380, showlegend=False, margin=dict(t=40, b=0, l=0, r=0)), width="stretch")
 
                 with tab_acum:
                     fig_1to1_ac = go.Figure()
@@ -775,7 +820,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
                         text=df_sincronizado['Fecha'].dt.strftime('%d-%m-%Y'),
                         hovertemplate="<b>%{text}</b><br>Obs Acum: %{x:.3f}<br>Sim Acum: %{y:.3f}<extra></extra>"
                     ))
-                    st.plotly_chart(fig_1to1_ac.update_layout(title=f"Ajuste Acumulado (R²: {r2_acum:.3f} | RMSE: {rmse_acum:.3f})", xaxis_title="Obs. Acumulada", yaxis_title="Sim. Acumulada", height=380, showlegend=False, margin=dict(t=40, b=0, l=0, r=0)), use_container_width=True)
+                    st.plotly_chart(fig_1to1_ac.update_layout(title=f"Ajuste Acumulado (R²: {r2_acum:.3f} | RMSE: {rmse_acum:.3f})", xaxis_title="Obs. Acumulada", yaxis_title="Sim. Acumulada", height=380, showlegend=False, margin=dict(t=40, b=0, l=0, r=0)), width="stretch")
 
     with tab2:
         st.header("💧 Dinámica Hídrica del Suelo (Lartigau)")
@@ -783,7 +828,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
         fig_hidrico.add_trace(go.Bar(x=df["Fecha"], y=df["Prec"], name='Lluvia Diaria (mm)', marker_color='#93c5fd', opacity=0.7))
         fig_hidrico.add_trace(go.Scatter(x=df["Fecha"], y=df["W_superficial"], name='Agua en Suelo (0-10cm)', mode='lines', line=dict(color='#0284c7', width=3), fill='tozeroy', fillcolor='rgba(2, 132, 199, 0.2)'))
         fig_hidrico.add_hline(y=w_max_val, line_dash="dot", line_color="#334155", annotation_text=f"Capacidad Máx. Suelo ({w_max_val} mm)", annotation_position="top left")
-        st.plotly_chart(fig_hidrico.update_layout(title="Precipitación vs. Retención Real de Humedad", xaxis_title="Fecha", yaxis_title="Milímetros (mm)", height=450, hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)), use_container_width=True)
+        st.plotly_chart(fig_hidrico.update_layout(title="Precipitación vs. Retención Real de Humedad", xaxis_title="Fecha", yaxis_title="Milímetros (mm)", height=450, hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)), width="stretch")
 
     with tab3:
         st.header("🔍 Clasificación DTW (Lartigau)")
@@ -803,7 +848,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
                 fp = go.Figure()
                 fp.add_trace(go.Scatter(x=JD_COM, y=cluster_model["curves_interp"][pred], name="Patrón Histórico", line=dict(dash='dash', color=cols.get(pred))))
                 fp.add_trace(go.Scatter(x=jd_grid, y=obs_norm * cluster_model["curves_interp"][pred].max(), name="2026", line=dict(color='black', width=3)))
-                st.plotly_chart(fp, use_container_width=True)
+                st.plotly_chart(fp, width="stretch")
             with c2:
                 nombres_patrones = {0: "🌾 Bimodal", 1: "🌱 Temprano", 2: "🍂 Tardío"}
                 st.success(f"### {nombres_patrones.get(pred, 'Desconocido')}")
@@ -812,9 +857,54 @@ if df_meteo_raw is not None and modelo_ann is not None:
             st.info("Datos insuficientes para clasificación por Dinámica Temporal (DTW).")
 
     with tab4:
-        st.subheader("🧪 Curva de Respuesta Fisiológica")
+        st.subheader("🧪 Curvas de Respuesta Fisiológica")
         x_temps = np.linspace(0, 45, 200)
-        st.plotly_chart(go.Figure().add_trace(go.Scatter(x=x_temps, y=[calculate_tt_scalar(t, t_base_val, t_opt_max, t_critica) for t in x_temps], mode='lines', line=dict(color='#2563eb', width=4), fill='tozeroy')), use_container_width=True)
+
+        fig_tt = go.Figure().add_trace(
+            go.Scatter(
+                x=x_temps,
+                y=[calculate_tt_scalar(t, t_base_val, t_opt_max, t_critica) for t in x_temps],
+                mode="lines",
+                name="Respuesta de tiempo térmico",
+                line=dict(color="#2563eb", width=4),
+                fill="tozeroy"
+            )
+        )
+        fig_tt.update_layout(
+            title="Respuesta no lineal para acumulación de grados-día",
+            xaxis_title="Temperatura media (°C)",
+            yaxis_title="Aporte térmico diario (°Cd)",
+            height=360
+        )
+        st.plotly_chart(fig_tt, width="stretch")
+
+        factor_temp_curva = factor_termoinhibicion_logistica(
+            x_temps,
+            t50=umbral_termoinhibicion,
+            k=pendiente_termoinhibicion
+        )
+        fig_term = go.Figure().add_trace(
+            go.Scatter(
+                x=x_temps,
+                y=factor_temp_curva,
+                mode="lines",
+                name="Factor térmico",
+                line=dict(color="#b91c1c", width=4)
+            )
+        )
+        fig_term.add_vline(
+            x=umbral_termoinhibicion,
+            line_dash="dash",
+            annotation_text=f"T50 = {umbral_termoinhibicion:.1f} °C"
+        )
+        fig_term.update_layout(
+            title=f"Termoinhibición logística (k = {pendiente_termoinhibicion:.1f} °C)",
+            xaxis_title="Temperatura media móvil de 15 días (°C)",
+            yaxis_title="Factor de aptitud térmica (0–1)",
+            yaxis=dict(range=[0, 1.05]),
+            height=360
+        )
+        st.plotly_chart(fig_term, width="stretch")
 
     # REPORTE EN EXCEL
     output = io.BytesIO()
@@ -827,9 +917,22 @@ if df_meteo_raw is not None and modelo_ann is not None:
                 'Métrica de Validación': ['PEC (%)', 'Lag Control (días)', 'Lead Time Control (días)', 'Pearson (Flujos)', 'NSE (Flujos Reales Evento)', 'KGE (Flujos)', 'RMSE (Acumulado)', 'R2 (Acumulado)', 'CCC (Acumulado)', 'Desfase T50 Global (días)', 'F1-Score (Coincidencia)', 'Exactitud Global', 'Hits (Aciertos)', 'Misses (Omisiones)', 'Falsos Positivos', 'Correctos Negativos', 'Desfase Primer Flujo (días)'],
                 'Valor': [pec, peak_lag, lead_time, pearson_r, nse_flujos, kge_flujos, rmse_acum, r2_acum, ccc_acum, desfase_t50, f1_score_coincidencia, exactitud_global, hits_val, misses_val, falsos_pos_val, correctos_neg_val, val_lag]
             }).to_excel(writer, sheet_name='Validacion_Estadistica', index=False)
-        pd.DataFrame({'Configuracion': ['T_Base', 'T_Optima', 'T_Critica', 'W_Max', 'Ke', 'Mod_Termico', 'Umbral_Termoinhibicion'], 'Valor': [t_base_val, t_opt_max, t_critica, w_max_val, ke_val, mod_termico, umbral_termoinhibicion]}).to_excel(writer, sheet_name='Bio_Params', index=False)
+        pd.DataFrame({
+            'Configuracion': [
+                'T_Base', 'T_Optima', 'T_Critica', 'W_Max', 'Ke', 'Mod_Termico',
+                'T50_Termoinhibicion', 'Pendiente_Termoinhibicion_k'
+            ],
+            'Valor': [
+                t_base_val, t_opt_max, t_critica, w_max_val, ke_val, mod_termico,
+                umbral_termoinhibicion, pendiente_termoinhibicion
+            ]
+        }).to_excel(writer, sheet_name='Bio_Params', index=False)
 
-    st.sidebar.download_button("📥 Descargar Reporte Lartigau", output.getvalue(), "PREDWEEM_Integral_Lartigau_vK4_9_15_Dual.xlsx")
+    st.sidebar.download_button(
+        "📥 Descargar Reporte Lartigau",
+        output.getvalue(),
+        "PREDWEEM_Integral_Lartigau_vK4_9_16_Termoinhibicion.xlsx"
+    )
 
 else:
     st.info("👋 Bienvenido a PREDWEEM. Cargue los datos climáticos de Lartigau para comenzar.")
