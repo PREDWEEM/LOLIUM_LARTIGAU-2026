@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 # ===============================================================
-# 🌾 PREDWEEM INTEGRAL vK4.9.16 — LOLIUM LARTIGAU 2026
+# 🌾 PREDWEEM INTEGRAL vK4.9.17 — LOLIUM LARTIGAU 2026
 # Actualización y Rigor Científico:
 # - ADAPTACIÓN LARTIGAU: Coordenadas fijas en -38.6166 para ET0 y balances.
 # - IDENTIDAD: PREDWEEM by GUILLERMO R. CHANTRE.
 # - LATENCIA INICIAL: Bloqueo estricto de emergencia los primeros 25 días del año.
 # - TERMOINHIBICIÓN CONTINUA: distribución normal acumulada complementaria,
-#   con media y desvío estándar ajustables desde la barra lateral.
+#   con media, desvío, factor mínimo y persistencia ajustables.
 # - VALIDACIÓN DE FRECUENCIA VARIABLE: Reemplazo de remuestreo sintético por
 #   Integración Dinámica de Intervalo Real (Event-to-Event), apto para frecuencias de 7 a 21 días.
 # - OPTIMIZADOR 2D BIO-FÍSICO: Barrido de alta eficiencia sobre W_Max y Ke usando fechas de campo puras.
@@ -156,7 +156,7 @@ def balance_hidrico_superficial(prec, et0, w_max=20.0, ke_suelo=0.4):
     return w
 
 
-def factor_termoinhibicion_normal(temperatura, media=35.0, desvio=1.0):
+def factor_termoinhibicion_normal(temperatura, media=24.0, desvio=2.0):
     """Factor continuo de aptitud térmica basado en una distribución normal.
 
     Se utiliza la función de supervivencia:
@@ -173,6 +173,43 @@ def factor_termoinhibicion_normal(temperatura, media=35.0, desvio=1.0):
     erf_vectorizado = np.vectorize(math.erf, otypes=[float])
     cdf_normal = 0.5 * (1.0 + erf_vectorizado(z))
     return np.clip(1.0 - cdf_normal, 0.0, 1.0)
+
+
+def habilitacion_termica(
+    factor_termico,
+    factor_minimo=0.35,
+    persistencia_dias=2,
+):
+    """Habilita el inicio cuando la aptitud térmica es suficiente.
+
+    La distribución normal nunca alcanza exactamente cero. Por eso, sin una
+    habilitación explícita, valores térmicos muy pequeños pueden superar un
+    umbral de alerta bajo y mantener invariable la fecha de inicio.
+
+    Se exige:
+    - factor térmico >= factor_minimo;
+    - persistencia durante varios días consecutivos.
+    """
+    if not 0.0 <= factor_minimo <= 1.0:
+        raise ValueError("El factor térmico mínimo debe estar entre 0 y 1.")
+    if int(persistencia_dias) < 1:
+        raise ValueError("La persistencia térmica debe ser de al menos un día.")
+
+    serie = pd.Series(np.asarray(factor_termico, dtype=float))
+    cumple = serie.ge(float(factor_minimo))
+
+    if int(persistencia_dias) > 1:
+        cumple = (
+            cumple.astype(int)
+            .rolling(
+                window=int(persistencia_dias),
+                min_periods=int(persistencia_dias),
+            )
+            .sum()
+            .ge(int(persistencia_dias))
+        )
+
+    return cumple.fillna(False).to_numpy(dtype=bool)
 
 class PracticalANNModel:
     def __init__(self, IW, bIW, LW, bLW):
@@ -340,6 +377,8 @@ def optimizar_parametros_hidricos_2d(
     latitud_lartigau=-38.6166,
     media_termoinhibicion=24.0,
     desvio_termoinhibicion=2.0,
+    factor_min_inicio_termico=0.35,
+    persistencia_termica_dias=2,
 ):
     df = df_meteo.copy()
     df['Fecha'] = pd.to_datetime(df['Fecha'])
@@ -387,6 +426,13 @@ def optimizar_parametros_hidricos_2d(
                 desvio=desvio_termoinhibicion,
             )
             df_sim["EMERREL"] *= df_sim["Factor_Termoinhibicion"]
+
+            df_sim["Habilitacion_Termica"] = habilitacion_termica(
+                df_sim["Factor_Termoinhibicion"].values,
+                factor_minimo=factor_min_inicio_termico,
+                persistencia_dias=persistencia_termica_dias,
+            )
+            df_sim.loc[~df_sim["Habilitacion_Termica"], "EMERREL"] = 0.0
             
             df_sync = sincronizar_intervalos_variables(df_sim, df_campo, col_fecha, col_plm2)
             metricas = calcular_metricas_validacion_integral(df_sync)
@@ -477,6 +523,31 @@ with col_ts:
         help="Controla cuán gradual es la transición entre aptitud e inhibición.",
     )
 
+
+factor_min_inicio_termico = st.sidebar.slider(
+    "Factor térmico mínimo para iniciar",
+    min_value=0.05,
+    max_value=0.95,
+    value=0.35,
+    step=0.05,
+    help=(
+        "La emergencia permanece en cero mientras el factor de aptitud "
+        "térmica sea inferior a este valor."
+    ),
+)
+
+persistencia_termica_dias = st.sidebar.number_input(
+    "Persistencia térmica para iniciar (días)",
+    min_value=1,
+    max_value=10,
+    value=2,
+    step=1,
+    help=(
+        "Días consecutivos con aptitud térmica suficiente antes de habilitar "
+        "el inicio de la emergencia."
+    ),
+)
+
 st.sidebar.markdown("**Ruptura de Dormición (Otoño)**")
 umbral_choque_hidrico = st.sidebar.slider("Choque Hídrico 3 días (mm)", 20.0, 100.0, 30.0)
 
@@ -520,6 +591,8 @@ with st.sidebar.expander("🛠️ Modo Dev: Calibrador Bio-Físico 2D", expanded
                     latitud_lartigau=-38.6166,
                     media_termoinhibicion=media_termoinhibicion,
                     desvio_termoinhibicion=desvio_termoinhibicion,
+                    factor_min_inicio_termico=factor_min_inicio_termico,
+                    persistencia_termica_dias=persistencia_termica_dias,
                 )
                 
             st.success("¡Barrido completado de forma rigurosa!")
@@ -592,6 +665,13 @@ if df_meteo_raw is not None and modelo_ann is not None:
         desvio=desvio_termoinhibicion,
     )
     df["EMERREL"] *= df["Factor_Termoinhibicion"]
+
+    df["Habilitacion_Termica"] = habilitacion_termica(
+        df["Factor_Termoinhibicion"].values,
+        factor_minimo=factor_min_inicio_termico,
+        persistencia_dias=persistencia_termica_dias,
+    )
+    df.loc[~df["Habilitacion_Termica"], "EMERREL"] = 0.0
 
     # 5. BLOQUEO FINAL ESTRICTO: Latencia Temprana (Primeros 25 días del año)
     df.loc[df["Julian_days"] <= 25, "EMERREL"] = 0.0
@@ -727,7 +807,7 @@ if df_meteo_raw is not None and modelo_ann is not None:
                 <p style="color:#1e293b; font-weight:bold; margin-top:0; margin-bottom:10px;">🧩 Matriz de Confusión (Intervalos de Monitoreo)</p>
                 <table style="width:100%; text-align:center; border-collapse: collapse; font-family:sans-serif;">
                     <tr>
-                        <th style="border-bottom:2px solid #e2e8f0; padding:10px; color:#475569; width:34%;">Realidad ⬇ \ Simulación ➡</th>
+                        <th style="border-bottom:2px solid #e2e8f0; padding:10px; color:#475569; width:34%;">Realidad ⬇ / Simulación ➡</th>
                         <th style="border-bottom:2px solid #e2e8f0; padding:10px; background-color:#eff6ff; color:#1e3a8a; width:33%;">🚨 Modelo Predice FLUJO</th>
                         <th style="border-bottom:2px solid #e2e8f0; padding:10px; background-color:#f8fafc; color:#475569; width:33%;">💤 Modelo Predice INACTIVO</th>
                     </tr>
@@ -920,6 +1000,15 @@ if df_meteo_raw is not None and modelo_ann is not None:
             line_color="#475569",
             annotation_text=f"Media T50 = {media_termoinhibicion:.1f} °C",
         )
+        fig_term.add_hline(
+            y=factor_min_inicio_termico,
+            line_dash="dot",
+            line_color="#ea580c",
+            annotation_text=(
+                f"Habilitación = {factor_min_inicio_termico:.2f} "
+                f"durante {persistencia_termica_dias} días"
+            ),
+        )
         fig_term.update_layout(
             title=(
                 "Termoinhibición normal acumulada "
@@ -954,6 +1043,8 @@ if df_meteo_raw is not None and modelo_ann is not None:
                 'Mod_Termico',
                 'Media_Termoinhibicion_T50',
                 'Desvio_Termoinhibicion_Sigma',
+                'Factor_Min_Inicio_Termico',
+                'Persistencia_Termica_Dias',
             ],
             'Valor': [
                 t_base_val,
@@ -964,10 +1055,12 @@ if df_meteo_raw is not None and modelo_ann is not None:
                 mod_termico,
                 media_termoinhibicion,
                 desvio_termoinhibicion,
+                factor_min_inicio_termico,
+                persistencia_termica_dias,
             ],
         }).to_excel(writer, sheet_name='Bio_Params', index=False)
 
-    st.sidebar.download_button("📥 Descargar Reporte Lartigau", output.getvalue(), "PREDWEEM_Integral_Lartigau_vK4_9_16_Normal.xlsx")
+    st.sidebar.download_button("📥 Descargar Reporte Lartigau", output.getvalue(), "PREDWEEM_Integral_Lartigau_vK4_9_17_InicioTermico.xlsx")
 
 else:
     st.info("👋 Bienvenido a PREDWEEM. Cargue los datos climáticos de Lartigau para comenzar.")
