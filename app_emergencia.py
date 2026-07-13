@@ -7,7 +7,7 @@ BASE = Path(__file__).resolve().parent
 SOURCE = BASE / "app_emergencia_vK4_9_15.py"
 
 PARAMETROS_OPTIMOS_LARTIGAU_20260713 = {
-    "w_max": 30.816194,
+    "w_max": 18.816194,
     "cobertura_pct": 57,
     "humedad_p50": 0.416332,
     "pendiente_hidrica": 10.0,
