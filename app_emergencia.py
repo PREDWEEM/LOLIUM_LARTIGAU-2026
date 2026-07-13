@@ -22,7 +22,7 @@ PARAMETROS_OPTIMOS_LARTIGAU_20260713 = {
     "techo_choque": 1.0,
     "umbral_primer_pico": 0.680112,
     "persistencia_primer_pico": 1,
-    "lag_dias": 0,
+    "lag_dias": 6,
 }
 
 
@@ -85,7 +85,7 @@ def patch(text):
     "techo_choque": 1.0,
     "umbral_primer_pico": 0.680112,
     "persistencia_primer_pico": 1,
-    "lag_dias": 0,
+    "lag_dias": 6,
 }
 UMBRAL_PRIMER_PICO = PARAMETROS_OPTIMOS_LARTIGAU_20260713["umbral_primer_pico"]
 LAG_EMERGENCIA_DIAS = int(PARAMETROS_OPTIMOS_LARTIGAU_20260713["lag_dias"])
