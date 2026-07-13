@@ -20,7 +20,7 @@ PARAMETROS_OPTIMOS_LARTIGAU_20260713 = {
     "umbral_choque_hidrico": 53.041243,
     "fin_choque_jd": 110,
     "techo_choque": 1.0,
-    "umbral_primer_pico": 0.680112,
+    "umbral_primer_pico": 0.70,
     "persistencia_primer_pico": 1,
     "lag_dias": 6,
 }
