@@ -78,7 +78,7 @@ def patch(text):
     "humedad_corte": 0.330487,
     "recarga_relativa": 0.590681,
     "latencia_jd": 20,
-    "ventana_termica": 19,
+    "ventana_termica": 10,
     "umbral_termoinhibicion": 26.398075,
     "ventana_lluvia": 3,
     "umbral_choque_hidrico": 53.041243,
