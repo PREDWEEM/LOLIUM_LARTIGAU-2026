@@ -1608,7 +1608,7 @@ with tabs[0]:
             emergence_log_figure.add_vrect(
                 x0=control_date,
                 x1=limit_date,
-                fillcolor="rgba(245, 158, 11, 0.085)",
+                fillcolor="rgba(34, 197, 94, 0.10)",
                 layer="below",
                 line_width=0,
             )
@@ -1756,11 +1756,11 @@ with tabs[0]:
                 showarrow=False,
                 xanchor="center",
                 yanchor="top",
-                bgcolor="rgba(255,251,235,0.90)",
+                bgcolor="rgba(240,253,244,0.94)",
                 borderpad=3,
                 font=dict(
                     size=11,
-                    color="#92400E",
+                    color="#166534",
                 ),
             )
 
