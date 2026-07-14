@@ -1160,14 +1160,21 @@ def add_interval_shading(
     field: pd.DataFrame | None,
     date_column: str | None,
 ) -> None:
+    """Añade bandas alternas suaves para los intervalos reales."""
     if field is None or field.empty or date_column is None:
         return
-    dates = field[date_column].sort_values().tolist()
+
+    dates = (
+        pd.to_datetime(field[date_column], errors="coerce")
+        .dropna()
+        .sort_values()
+        .tolist()
+    )
     for index in range(1, len(dates), 2):
         figure.add_vrect(
             x0=dates[index - 1],
             x1=dates[index],
-            fillcolor="rgba(148, 163, 184, 0.12)",
+            fillcolor="rgba(148, 163, 184, 0.065)",
             layer="below",
             line_width=0,
         )
@@ -1183,7 +1190,7 @@ st.title(
     "(BA, lat=-38.6166; lon=-61.7000)"
 )
 st.caption(
-    "vK4.9.15 Adaptada · métricas y funcionalidades integrales · "
+    "vK4.9.15 Adaptada · VISUAL V3 · "
     "ANN desacoplada de la cobertura · sin fecha objetivo y sin lag"
 )
 
@@ -1584,30 +1591,57 @@ with tabs[0]:
                 ),
             )
 
-    main_column, gauge_column = st.columns([2, 1])
+    main_column, gauge_column = st.columns([3.4, 1])
 
     with main_column:
         emergence_log_figure = go.Figure()
+
+        # Intervalos reales de monitoreo: bandas tenues.
         add_interval_shading(
             emergence_log_figure,
             field,
             field_date_column,
         )
+
+        # Ventana de aplicación eficiente.
+        if control_date is not None and limit_date is not None:
+            emergence_log_figure.add_vrect(
+                x0=control_date,
+                x1=limit_date,
+                fillcolor="rgba(245, 158, 11, 0.085)",
+                layer="below",
+                line_width=0,
+            )
+
+        # Residualidad, cuando corresponde.
+        if control_date is not None and residual_days > 0:
+            emergence_log_figure.add_vrect(
+                x0=control_date,
+                x1=control_date + pd.Timedelta(days=int(residual_days)),
+                fillcolor="rgba(37, 99, 235, 0.055)",
+                layer="below",
+                line_width=0,
+            )
+
+        # Curva simulada sin relleno, para evitar saturación visual.
         emergence_log_figure.add_trace(
             go.Scatter(
                 x=simulation["Fecha"],
                 y=simulation["EMERREL_LOG"],
                 mode="lines",
                 name="Tasa diaria simulada (log)",
-                fill="tozeroy",
+                line=dict(
+                    color="#075FCF",
+                    width=2.4,
+                ),
+                hovertemplate=(
+                    "<b>%{x|%d-%m-%Y}</b><br>"
+                    "Simulado: %{y:.3f}<extra></extra>"
+                ),
             )
         )
-        emergence_log_figure.add_hline(
-            y=alert_threshold_log,
-            line_dash="dash",
-            annotation_text=f"Alerta ({alert_threshold:.3f})",
-        )
 
+        # Datos de campo.
         if field is not None:
             emergence_log_figure.add_trace(
                 go.Scatter(
@@ -1615,51 +1649,282 @@ with tabs[0]:
                     y=field["Campo_Normalizado_LOG"],
                     mode="markers+lines",
                     name="Campo normalizado (log)",
-                    marker=dict(size=9, symbol="diamond"),
-                    line=dict(dash="dot"),
+                    marker=dict(
+                        size=9,
+                        symbol="circle",
+                        color="#60A5FA",
+                        line=dict(
+                            color="#FFFFFF",
+                            width=1.4,
+                        ),
+                    ),
+                    line=dict(
+                        color="#60A5FA",
+                        width=2.2,
+                        dash="dash",
+                    ),
+                    hovertemplate=(
+                        "<b>%{x|%d-%m-%Y}</b><br>"
+                        "Campo: %{y:.3f}<extra></extra>"
+                    ),
                 )
             )
 
+        # Umbral de alerta.
+        emergence_log_figure.add_hline(
+            y=alert_threshold_log,
+            line_color="#111827",
+            line_width=1.7,
+            line_dash="dash",
+        )
+        emergence_log_figure.add_annotation(
+            x=0.995,
+            xref="paper",
+            y=alert_threshold_log,
+            yref="y",
+            text=f"Alerta ({alert_threshold:.3f})",
+            showarrow=False,
+            xanchor="right",
+            yanchor="bottom",
+            yshift=7,
+            bgcolor="rgba(255,255,255,0.94)",
+            bordercolor="rgba(148,163,184,0.50)",
+            borderwidth=1,
+            borderpad=4,
+            font=dict(
+                size=12,
+                color="#374151",
+            ),
+        )
+
+        # Inicio del recuento térmico.
         if first_peak_date is not None:
             emergence_log_figure.add_vline(
                 x=first_peak_date,
+                line_color="#111827",
+                line_width=1.5,
                 line_dash="dot",
-                annotation_text="Inicio térmico",
             )
+            emergence_log_figure.add_annotation(
+                x=first_peak_date,
+                xref="x",
+                y=1.035,
+                yref="paper",
+                text="Inicio térmico",
+                showarrow=False,
+                xanchor="center",
+                yanchor="bottom",
+                bgcolor="rgba(255,255,255,0.96)",
+                bordercolor="rgba(148,163,184,0.45)",
+                borderwidth=1,
+                borderpad=4,
+                font=dict(size=12, color="#111827"),
+            )
+
+        # Fecha de control.
         if control_date is not None:
             emergence_log_figure.add_vline(
                 x=control_date,
+                line_color="#111827",
+                line_width=1.5,
                 line_dash="dot",
-                annotation_text=f"Control ({tt_control} °Cd)",
             )
-            if residual_days > 0:
-                emergence_log_figure.add_vrect(
-                    x0=control_date,
-                    x1=control_date + pd.Timedelta(days=int(residual_days)),
-                    opacity=0.10,
-                    line_width=0,
-                    annotation_text=f"Protección {residual_days} d",
-                )
-        if control_date is not None and limit_date is not None:
-            emergence_log_figure.add_vrect(
-                x0=control_date,
-                x1=limit_date,
-                fillcolor="rgba(255, 165, 0, 0.12)",
-                line_width=0,
-                annotation_text="Ventana eficiente",
+            emergence_log_figure.add_annotation(
+                x=control_date,
+                xref="x",
+                y=1.105,
+                yref="paper",
+                text=f"Control ({tt_control} °Cd)",
+                showarrow=False,
+                xanchor="center",
+                yanchor="bottom",
+                bgcolor="rgba(255,255,255,0.96)",
+                bordercolor="rgba(148,163,184,0.45)",
+                borderwidth=1,
+                borderpad=4,
+                font=dict(size=12, color="#111827"),
             )
 
-        emergence_log_figure.update_layout(
-            title=(
-                "Dinámica fisiológica de emergencia "
-                "(intervalos reales de monitoreo)"
-            ),
-            xaxis_title="Fecha",
-            yaxis_title="Log10(EMERREL + 0,01)",
-            hovermode="x unified",
-            height=480,
+        # Etiqueta de la ventana agronómica.
+        if control_date is not None and limit_date is not None:
+            emergence_log_figure.add_annotation(
+                x=control_date + (limit_date - control_date) / 2,
+                xref="x",
+                y=0.975,
+                yref="paper",
+                text="Ventana eficiente",
+                showarrow=False,
+                xanchor="center",
+                yanchor="top",
+                bgcolor="rgba(255,251,235,0.90)",
+                borderpad=3,
+                font=dict(
+                    size=11,
+                    color="#92400E",
+                ),
+            )
+
+        # Marcas mensuales en español.
+        first_month = pd.Timestamp(
+            simulation["Fecha"].min()
+        ).to_period("M").to_timestamp()
+        last_month = pd.Timestamp(
+            simulation["Fecha"].max()
+        ).to_period("M").to_timestamp()
+        month_ticks = pd.date_range(
+            first_month,
+            last_month,
+            freq="MS",
         )
-        st.plotly_chart(emergence_log_figure, width="stretch")
+        month_names = {
+            1: "Ene",
+            2: "Feb",
+            3: "Mar",
+            4: "Abr",
+            5: "May",
+            6: "Jun",
+            7: "Jul",
+            8: "Ago",
+            9: "Sep",
+            10: "Oct",
+            11: "Nov",
+            12: "Dic",
+        }
+        month_labels = [
+            f"{month_names[date.month]} {date.year}"
+            for date in month_ticks
+        ]
+
+        emergence_log_figure.update_layout(
+            title=dict(
+                text=(
+                    "Dinámica fisiológica de emergencia "
+                    "(intervalos reales de monitoreo)"
+                ),
+                x=0.0,
+                xanchor="left",
+                font=dict(
+                    size=21,
+                    color="#111827",
+                    family="Arial, sans-serif",
+                ),
+            ),
+            xaxis=dict(
+                title=dict(
+                    text="Fecha",
+                    font=dict(
+                        size=15,
+                        color="#4B5563",
+                    ),
+                    standoff=14,
+                ),
+                tickmode="array",
+                tickvals=month_ticks,
+                ticktext=month_labels,
+                tickfont=dict(
+                    size=12,
+                    color="#4B5563",
+                ),
+                showgrid=False,
+                showline=True,
+                linecolor="#6B7280",
+                linewidth=1,
+                ticks="outside",
+                ticklen=6,
+                zeroline=False,
+                automargin=True,
+            ),
+            yaxis=dict(
+                title=dict(
+                    text="Log10(EMERREL + 0,01)",
+                    font=dict(
+                        size=15,
+                        color="#4B5563",
+                    ),
+                    standoff=12,
+                ),
+                range=[-2.18, 0.12],
+                tickmode="array",
+                tickvals=[-2.0, -1.5, -1.0, -0.5, 0.0],
+                tickfont=dict(
+                    size=12,
+                    color="#4B5563",
+                ),
+                showgrid=True,
+                gridcolor="rgba(148, 163, 184, 0.28)",
+                griddash="dash",
+                gridwidth=1,
+                showline=True,
+                linecolor="#6B7280",
+                linewidth=1,
+                zeroline=False,
+                automargin=True,
+            ),
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.17,
+                xanchor="right",
+                x=1.0,
+                bgcolor="rgba(255,255,255,0.92)",
+                bordercolor="rgba(148,163,184,0.35)",
+                borderwidth=1,
+                font=dict(
+                    size=12,
+                    color="#374151",
+                ),
+            ),
+            hovermode="x unified",
+            hoverlabel=dict(
+                bgcolor="#FFFFFF",
+                bordercolor="#CBD5E1",
+                font=dict(
+                    size=12,
+                    color="#111827",
+                ),
+            ),
+            height=630,
+            margin=dict(
+                l=82,
+                r=28,
+                t=132,
+                b=78,
+            ),
+            paper_bgcolor="#FFFFFF",
+            plot_bgcolor="#FFFFFF",
+            font=dict(
+                family="Arial, sans-serif",
+                color="#374151",
+            ),
+            dragmode="zoom",
+        )
+
+        emergence_log_figure.update_xaxes(
+            rangeslider_visible=False,
+            fixedrange=False,
+        )
+        emergence_log_figure.update_yaxes(fixedrange=False)
+
+        st.plotly_chart(
+            emergence_log_figure,
+            width="stretch",
+            config={
+                "displaylogo": False,
+                "responsive": True,
+                "scrollZoom": True,
+                "modeBarButtonsToRemove": [
+                    "lasso2d",
+                    "select2d",
+                ],
+                "toImageButtonOptions": {
+                    "format": "png",
+                    "filename": "PREDWEEM_dinamica_emergencia",
+                    "height": 1000,
+                    "width": 2000,
+                    "scale": 2,
+                },
+            },
+        )
 
         risk_figure = go.Figure(
             data=go.Heatmap(
