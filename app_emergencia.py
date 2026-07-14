@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-PREDWEEM Lartigau vK4.9.24.
+PREDWEEM Lartigau vK4.9.25.
 
 Corrección de estabilidad del primer pico frente a cambios de cobertura:
 - restaura íntegramente el subsistema temporal validado en vK4.9.15;
 - la cobertura afecta el balance hídrico mediante Ke;
 - el modulador térmico se conserva sólo como diagnóstico de microclima;
 - la ANN recibe TMAX y TMIN meteorológicas;
-- el inicio exige dos días consecutivos con EMERREL > 0.70;
+- el inicio se habilita con un día de EMERREL > 0.70;
 - no se fija una fecha de pico y no se aplica lag.
 """
 from pathlib import Path
@@ -17,7 +17,7 @@ BASE = Path(__file__).resolve().parent
 SOURCE = BASE / "app_emergencia_vK4_9_15.py"
 
 UMBRAL_PRIMER_PICO_ESTABLE = 0.70
-PERSISTENCIA_PRIMER_PICO_DIAS = 2
+PERSISTENCIA_PRIMER_PICO_DIAS = 1
 
 
 def replace_once(text, pattern, replacement, label, flags=0):
@@ -32,12 +32,12 @@ def replace_once(text, pattern, replacement, label, flags=0):
 def patch(source):
     source = source.replace(
         "# 🌾 PREDWEEM INTEGRAL vK4.9.15 — LOLIUM LARTIGAU 2026",
-        "# 🌾 PREDWEEM INTEGRAL vK4.9.24 — LOLIUM LARTIGAU 2026",
+        "# 🌾 PREDWEEM INTEGRAL vK4.9.25 — LOLIUM LARTIGAU 2026",
         1,
     )
     source = source.replace(
         "# - PRIMER PICO VÁLIDO: La campaña se habilita únicamente cuando EMERREL > 0.70.",
-        "# - PRIMER PICO ESTABLE: se requieren 2 días consecutivos con EMERREL > 0.70.",
+        "# - PRIMER PICO VÁLIDO: se habilita con 1 día de EMERREL > 0.70.",
         1,
     )
     source = source.replace(
@@ -49,7 +49,7 @@ def patch(source):
     )
 
     constants = """UMBRAL_PRIMER_PICO = 0.70
-PERSISTENCIA_PRIMER_PICO_DIAS = 2
+PERSISTENCIA_PRIMER_PICO_DIAS = 1
 """
     source = replace_once(
         source,
@@ -63,7 +63,7 @@ PERSISTENCIA_PRIMER_PICO_DIAS = 2
     umbral=UMBRAL_PRIMER_PICO,
     persistencia=PERSISTENCIA_PRIMER_PICO_DIAS,
 ):
-    # Criterio causal: exige un pulso sostenido y no fija fecha calendario.
+    # Criterio causal: habilita el primer día que supera el umbral.
     df = df.copy()
     df["EMERREL_ANTES_FILTRO_PRIMER_PICO"] = df["EMERREL"].copy()
 
@@ -133,8 +133,8 @@ PERSISTENCIA_PRIMER_PICO_DIAS = 2
         r'\s*f"EMERREL > \{UMBRAL_PRIMER_PICO:\.2f\}\."\n'
         r'\s*\)',
         """st.sidebar.info(
-    f"El inicio se habilita con {PERSISTENCIA_PRIMER_PICO_DIAS} días "
-    f"consecutivos de EMERREL > {UMBRAL_PRIMER_PICO:.2f}. "
+    f"El inicio se habilita con 1 día de EMERREL > "
+    f"{UMBRAL_PRIMER_PICO:.2f}. "
     "La fecha surge de la simulación y no se aplica lag."
 )""",
         "mensaje del criterio de pico",
@@ -142,12 +142,12 @@ PERSISTENCIA_PRIMER_PICO_DIAS = 2
 
     source = source.replace(
         "# La campaña comienza en el primer valor estrictamente superior a 0.70.",
-        "# La campaña comienza con el primer pulso sostenido de 2 días > 0.70.",
+        "# La campaña comienza en el primer día con EMERREL > 0.70.",
         1,
     )
     source = source.replace(
         'f"Pico validado > {UMBRAL_PRIMER_PICO:.2f} "',
-        'f"Pico estable ({PERSISTENCIA_PRIMER_PICO_DIAS} días) > {UMBRAL_PRIMER_PICO:.2f} "',
+        'f"Pico habilitado (1 día) > {UMBRAL_PRIMER_PICO:.2f} "',
         1,
     )
 
