@@ -53,7 +53,7 @@ PERSISTENCIA_PRIMER_PICO_DIAS = 1
 """
     source = replace_once(
         source,
-        r"UMBRAL_PRIMER_PICO\s*=\s*0\.70\s*\n",
+        r"UMBRAL_PRIMER_PICO\s*=\s*0\.50\s*\n",
         constants,
         "constantes del primer pico",
     )
