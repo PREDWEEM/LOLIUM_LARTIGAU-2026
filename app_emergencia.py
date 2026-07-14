@@ -48,7 +48,7 @@ def patch(source):
         1,
     )
 
-    constants = """UMBRAL_PRIMER_PICO = 0.70
+    constants = """UMBRAL_PRIMER_PICO = 0.60
 PERSISTENCIA_PRIMER_PICO_DIAS = 1
 """
     source = replace_once(
