@@ -1,17 +1,7 @@
 # -*- coding: utf-8 -*-
 # ===============================================================
-# 🌾 PREDWEEM INTEGRAL vK4.9.15 ADAPTADA — LOLIUM LARTIGAU 2026
+# 🌾 PREDWEEM INTEGRAL vK4.9.26 — LOLIUM LARTIGAU 2026
 # PREDWEEM by GUILLERMO R. CHANTRE
-#
-# ADAPTACIÓN:
-# - conserva métricas, Event-to-Event, DTW, logística térmica,
-#   matriz de confusión, calibrador 2D y reporte Excel de vK4.9.15;
-# - la ANN recibe JD, TMAX, TMIN y precipitación meteorológicas;
-# - la cobertura modifica Ke y el balance hídrico, no la ANN;
-# - el modulador térmico se mantiene únicamente como diagnóstico;
-# - el inicio se habilita con 1 día de EMERREL > 0.70;
-# - latencia fija JD 45 y termoinhibición 5 días >= 24 °C;
-# - sin fecha objetivo y sin lag temporal.
 #
 # Criterios principales:
 # - ANN con meteorología observada: JD, TMAX, TMIN y precipitación.
@@ -42,7 +32,7 @@ import streamlit as st
 # ---------------------------------------------------------------
 # 1. CONFIGURACIÓN GENERAL
 # ---------------------------------------------------------------
-APP_VERSION = "vK4.9.15 Adaptada"
+APP_VERSION = "vK4.9.26"
 LATITUD_LARTIGAU = -38.6166
 
 LATENCIA_JD = 45
@@ -873,308 +863,8 @@ def validation_metrics(
     }
 
 
-
 # ---------------------------------------------------------------
-# 7. MÉTRICAS Y FUNCIONALIDADES INTEGRALES vK4.9.15
-# ---------------------------------------------------------------
-def dtw_distance(sequence_a: np.ndarray, sequence_b: np.ndarray) -> float:
-    """Distancia Dynamic Time Warping clásica."""
-    a = np.asarray(sequence_a, dtype=float)
-    b = np.asarray(sequence_b, dtype=float)
-    if a.size == 0 or b.size == 0:
-        return float("inf")
-
-    matrix = np.full((len(a) + 1, len(b) + 1), np.inf)
-    matrix[0, 0] = 0.0
-    for i in range(1, len(a) + 1):
-        for j in range(1, len(b) + 1):
-            cost = abs(a[i - 1] - b[j - 1])
-            matrix[i, j] = cost + min(
-                matrix[i - 1, j],
-                matrix[i, j - 1],
-                matrix[i - 1, j - 1],
-            )
-    return float(matrix[-1, -1])
-
-
-def calculate_operational_metrics(
-    simulation: pd.DataFrame,
-    field: pd.DataFrame | None,
-    field_date_column: str | None,
-    field_value_column: str | None,
-    first_peak_date: pd.Timestamp | None,
-    control_date: pd.Timestamp | None,
-    alert_threshold: float,
-) -> dict[str, Any]:
-    """Métricas operativas incluidas en vK4.9.15."""
-    result: dict[str, Any] = {
-        "Fecha_Primer_Flujo_Observado": pd.NaT,
-        "Desfase_Primer_Flujo_Dias": None,
-        "T50_Observado": pd.NaT,
-        "T50_Simulado": pd.NaT,
-        "Desfase_T50_Dias": None,
-        "PEC_Porcentaje": None,
-        "Lag_Control_vs_Pico_Campo_Dias": None,
-        "Lead_Time_Dias": None,
-        "Fecha_Primera_Alerta": pd.NaT,
-    }
-    if (
-        field is None
-        or field.empty
-        or field_date_column is None
-        or field_value_column is None
-    ):
-        return result
-
-    positive = field[field[field_value_column] > 0]
-    if not positive.empty:
-        first_observed = pd.Timestamp(positive.iloc[0][field_date_column])
-        result["Fecha_Primer_Flujo_Observado"] = first_observed
-        if first_peak_date is not None:
-            result["Desfase_Primer_Flujo_Dias"] = int(
-                (first_peak_date - first_observed).days
-            )
-
-    total_field = float(field[field_value_column].sum())
-    if total_field > 0:
-        field_cumulative = field[field_value_column].cumsum() / total_field
-        t50_candidates = field.loc[field_cumulative >= 0.5, field_date_column]
-        if not t50_candidates.empty:
-            result["T50_Observado"] = pd.Timestamp(t50_candidates.iloc[0])
-
-        last_field_date = pd.Timestamp(field[field_date_column].max())
-        simulation_cut = simulation[
-            simulation["Fecha"] <= last_field_date
-        ].copy()
-        total_simulation = float(simulation_cut["EMERREL"].sum())
-        if total_simulation > 0:
-            sim_cumulative = (
-                simulation_cut["EMERREL"].cumsum() / total_simulation
-            )
-            sim_t50_candidates = simulation_cut.loc[
-                sim_cumulative >= 0.5,
-                "Fecha",
-            ]
-            if not sim_t50_candidates.empty:
-                result["T50_Simulado"] = pd.Timestamp(
-                    sim_t50_candidates.iloc[0]
-                )
-
-        if (
-            pd.notna(result["T50_Observado"])
-            and pd.notna(result["T50_Simulado"])
-        ):
-            result["Desfase_T50_Dias"] = int(
-                (
-                    result["T50_Simulado"]
-                    - result["T50_Observado"]
-                ).days
-            )
-
-    alert_candidates = simulation[
-        simulation["EMERREL"] >= float(alert_threshold)
-    ]
-    if not alert_candidates.empty:
-        result["Fecha_Primera_Alerta"] = pd.Timestamp(
-            alert_candidates.iloc[0]["Fecha"]
-        )
-
-    if control_date is not None and total_field > 0:
-        result["PEC_Porcentaje"] = float(
-            100.0
-            * field.loc[
-                field[field_date_column] <= control_date,
-                field_value_column,
-            ].sum()
-            / total_field
-        )
-        observed_peak_date = pd.Timestamp(
-            field.loc[field[field_value_column].idxmax(), field_date_column]
-        )
-        result["Lag_Control_vs_Pico_Campo_Dias"] = int(
-            (control_date - observed_peak_date).days
-        )
-        if pd.notna(result["Fecha_Primera_Alerta"]):
-            result["Lead_Time_Dias"] = int(
-                (
-                    control_date
-                    - result["Fecha_Primera_Alerta"]
-                ).days
-            )
-    return result
-
-
-def classify_dtw_pattern(
-    simulation: pd.DataFrame,
-    cluster_model: Any,
-    cutoff_date: str = "2026-05-01",
-) -> dict[str, Any] | None:
-    """Clasifica la dinámica temprana contra los medoides históricos."""
-    if not isinstance(cluster_model, dict):
-        return None
-    if "JD_common" not in cluster_model or "curves_interp" not in cluster_model:
-        return None
-
-    observed = simulation[
-        simulation["Fecha"] < pd.Timestamp(cutoff_date)
-    ].copy()
-    if observed.empty or float(observed["EMERREL"].sum()) <= 0:
-        return None
-
-    jd_common = np.asarray(cluster_model["JD_common"], dtype=float)
-    curves = np.asarray(cluster_model["curves_interp"], dtype=float)
-    if curves.ndim == 1:
-        curves = curves.reshape(1, -1)
-
-    medoid_indices = cluster_model.get("medoids_k3")
-    if medoid_indices is not None:
-        medoid_indices = np.asarray(medoid_indices, dtype=int)
-        valid = medoid_indices[
-            (medoid_indices >= 0) & (medoid_indices < len(curves))
-        ]
-        prototypes = curves[valid] if len(valid) >= 3 else curves[:3]
-    else:
-        prototypes = curves[:3]
-
-    if len(prototypes) < 3:
-        return None
-
-    cutoff_jd = float(observed["Julian_days"].max())
-    mask = jd_common <= cutoff_jd
-    jd_grid = jd_common[mask]
-    if jd_grid.size < 3:
-        return None
-
-    observed_max = float(observed["EMERREL"].max())
-    if observed_max <= 0:
-        return None
-
-    observed_normalized = np.interp(
-        jd_grid,
-        observed["Julian_days"].to_numpy(float),
-        observed["EMERREL"].to_numpy(float) / observed_max,
-    )
-
-    distances: list[float] = []
-    normalized_prototypes: list[np.ndarray] = []
-    for prototype in prototypes:
-        prototype_cut = np.asarray(prototype, dtype=float)[mask]
-        maximum = float(np.max(prototype_cut)) if prototype_cut.size else 0.0
-        normalized = (
-            prototype_cut / maximum if maximum > 0 else prototype_cut
-        )
-        normalized_prototypes.append(normalized)
-        distances.append(dtw_distance(observed_normalized, normalized))
-
-    prediction = int(np.argmin(distances))
-    names = {
-        0: "🌾 Intermedio / Bimodal",
-        1: "🌱 Temprano / Compacto",
-        2: "🍂 Tardío / Extendido",
-    }
-    colors = {0: "#0284c7", 1: "#16a34a", 2: "#ea580c"}
-    return {
-        "prediction": prediction,
-        "name": names.get(prediction, "Patrón desconocido"),
-        "color": colors.get(prediction, "#475569"),
-        "distance": float(distances[prediction]),
-        "distances": distances,
-        "jd_grid": jd_grid,
-        "observed_normalized": observed_normalized,
-        "prototype": normalized_prototypes[prediction],
-    }
-
-
-def optimize_hydric_2d(
-    weather_raw: pd.DataFrame,
-    field_raw: pd.DataFrame,
-    ann_model: PracticalANNModel,
-    coverage_values: np.ndarray,
-    wmax_values: np.ndarray,
-    thermoinhibition_threshold: float,
-    hydric_shock_threshold: float,
-) -> pd.DataFrame:
-    """
-    Calibrador biofísico 2D adaptado.
-
-    Conserva fijos los parámetros temporales y explora únicamente
-    cobertura (que determina Ke) y Wmax.
-    """
-    field, date_column, value_column = canonicalize_field(field_raw)
-    rows: list[dict[str, Any]] = []
-
-    for coverage in coverage_values:
-        ke_value, thermal_modulator = surface_parameters(float(coverage))
-        for wmax in wmax_values:
-            simulated, peak_index = simulate_emergence(
-                weather_raw,
-                ann_model,
-                coverage_percent=int(coverage),
-                w_max=float(wmax),
-                thermoinhibition_threshold=float(
-                    thermoinhibition_threshold
-                ),
-                hydric_shock_threshold=float(hydric_shock_threshold),
-            )
-            synchronized = synchronize_real_intervals(
-                simulated,
-                field,
-                date_column,
-                value_column,
-            )
-            metrics = validation_metrics(synchronized)
-            first_date = (
-                pd.Timestamp(simulated.loc[peak_index, "Fecha"])
-                if peak_index is not None
-                else pd.NaT
-            )
-            rows.append(
-                {
-                    "Cobertura_pct": int(coverage),
-                    "Ke_Suelo": ke_value,
-                    "Mod_Termico_Diagnostico": thermal_modulator,
-                    "W_Max_mm": float(wmax),
-                    "Fecha_Primer_Pico": first_date,
-                    "Pearson_Flujos": metrics["Pearson_Flujos"],
-                    "NSE_Flujos": metrics["NSE_Flujos"],
-                    "KGE_Flujos": metrics["KGE_Flujos"],
-                    "CCC_Acumulado": metrics["CCC_Acumulado"],
-                    "R2_Acumulado": metrics["R2_Acumulado"],
-                    "RMSE_Acumulado": metrics["RMSE_Acumulado"],
-                    "F1_Score": metrics["F1_Score_Coincidencia"],
-                    "Exactitud": metrics["Exactitud_Global"],
-                }
-            )
-
-    result = pd.DataFrame(rows)
-    if result.empty:
-        return result
-    return result.sort_values(
-        by=["F1_Score", "KGE_Flujos", "NSE_Flujos"],
-        ascending=[False, False, False],
-    ).reset_index(drop=True)
-
-
-def add_interval_shading(
-    figure: go.Figure,
-    field: pd.DataFrame | None,
-    date_column: str | None,
-) -> None:
-    if field is None or field.empty or date_column is None:
-        return
-    dates = field[date_column].sort_values().tolist()
-    for index in range(1, len(dates), 2):
-        figure.add_vrect(
-            x0=dates[index - 1],
-            x1=dates[index],
-            fillcolor="rgba(148, 163, 184, 0.12)",
-            layer="below",
-            line_width=0,
-        )
-
-
-# ---------------------------------------------------------------
-# 8. INTERFAZ INTEGRAL
+# 7. INTERFAZ
 # ---------------------------------------------------------------
 ann_model, cluster_model = load_models()
 
@@ -1183,8 +873,8 @@ st.title(
     "(BA, lat=-38.6166; lon=-61.7000)"
 )
 st.caption(
-    "vK4.9.15 Adaptada · métricas y funcionalidades integrales · "
-    "ANN desacoplada de la cobertura · sin fecha objetivo y sin lag"
+    f"{APP_VERSION} · primer pico resultante de la simulación · "
+    "sin fecha objetivo y sin lag"
 )
 
 with st.expander("📂 1. Datos del lote", expanded=True):
@@ -1215,6 +905,7 @@ with st.expander("📂 1. Datos del lote", expanded=True):
         ke_value, thermal_modulator = surface_parameters(
             coverage_percent
         )
+
         parameter_1, parameter_2 = st.columns(2)
         parameter_1.metric("Ke aplicado", f"{ke_value:.3f}")
         parameter_2.metric(
@@ -1226,22 +917,7 @@ with st.expander("📂 1. Datos del lote", expanded=True):
 weather_raw = load_data(weather_upload, "meteo_daily")
 field_raw = load_data(field_upload, "LARTIGAU_campo")
 
-st.sidebar.markdown("## ⚙️ Fisiología y logística")
-alert_threshold = st.sidebar.slider(
-    "Umbral de alerta temprana",
-    min_value=0.001,
-    max_value=0.80,
-    value=0.005,
-    step=0.001,
-)
-residual_days = st.sidebar.number_input(
-    "Residualidad del herbicida (días)",
-    min_value=0,
-    max_value=60,
-    value=0,
-    step=1,
-)
-
+st.sidebar.markdown("## ⚙️ Fisiología fija")
 st.sidebar.info(
     f"Latencia hasta JD {LATENCIA_JD} · "
     f"termoinhibición {VENTANA_TERMICA_DIAS} días ≥ "
@@ -1261,7 +937,12 @@ w_max_value = st.sidebar.number_input(
     value=WMAX_PREDETERMINADO,
     step=0.1,
     format="%.3f",
+    help=(
+        "Con la meteorología 2026 analizada, valores de aproximadamente "
+        "18–20 mm y cobertura ≥75 % produjeron un pico en febrero."
+    ),
 )
+
 thermoinhibition_threshold = st.sidebar.number_input(
     "Umbral termoinhibición (°C)",
     min_value=15.0,
@@ -1308,6 +989,7 @@ tt_limit = st.sidebar.number_input(
 
 if ann_model is None:
     st.stop()
+
 if weather_raw is None:
     st.warning(
         "Cargue un archivo meteorológico o incorpore "
@@ -1338,8 +1020,6 @@ simulation["DG"] = simulation["Tmedia_aire"].apply(
         float(t_critical),
     )
 )
-simulation["EMERREL_LOG"] = np.log10(simulation["EMERREL"] + 0.01)
-alert_threshold_log = np.log10(float(alert_threshold) + 0.01)
 
 first_peak_date = (
     pd.Timestamp(simulation.loc[first_peak_index, "Fecha"])
@@ -1350,25 +1030,22 @@ first_peak_date = (
 control_date = None
 limit_date = None
 thermal_time_today = 0.0
-thermal_time_7days = 0.0
-thermal_curve = pd.DataFrame()
-
 if first_peak_date is not None:
-    thermal_curve = simulation[
+    from_peak = simulation[
         simulation["Fecha"] >= first_peak_date
     ].copy()
-    thermal_curve["DGA_cum"] = thermal_curve["DG"].cumsum()
+    from_peak["DGA_cum"] = from_peak["DG"].cumsum()
 
-    control_candidates = thermal_curve[
-        thermal_curve["DGA_cum"] >= float(tt_control)
+    control_candidates = from_peak[
+        from_peak["DGA_cum"] >= float(tt_control)
     ]
     if not control_candidates.empty:
         control_date = pd.Timestamp(
             control_candidates.iloc[0]["Fecha"]
         )
 
-    limit_candidates = thermal_curve[
-        thermal_curve["DGA_cum"] >= float(tt_limit)
+    limit_candidates = from_peak[
+        from_peak["DGA_cum"] >= float(tt_limit)
     ]
     if not limit_candidates.empty:
         limit_date = pd.Timestamp(
@@ -1380,73 +1057,25 @@ if first_peak_date is not None:
         max(today, simulation["Fecha"].min()),
         simulation["Fecha"].max(),
     )
-    today_candidates = simulation.index[
-        simulation["Fecha"] <= effective_today
-    ].tolist()
-    today_index = today_candidates[-1] if today_candidates else 0
-    forecast_index = min(today_index + 7, len(simulation) - 1)
-
     thermal_time_today = float(
         simulation.loc[
             (simulation["Fecha"] >= first_peak_date)
-            & (simulation.index <= today_index),
-            "DG",
-        ].sum()
-    )
-    thermal_time_7days = float(
-        simulation.loc[
-            (simulation["Fecha"] >= first_peak_date)
-            & (simulation.index <= forecast_index),
+            & (simulation["Fecha"] <= effective_today),
             "DG",
         ].sum()
     )
 
-field = None
-field_date_column = None
-field_value_column = None
-synchronized = pd.DataFrame()
-metrics = validation_metrics(synchronized)
-field_error = None
-
-if field_raw is not None:
-    try:
-        field, field_date_column, field_value_column = canonicalize_field(
-            field_raw
-        )
-        field["Campo_Normalizado_LOG"] = np.log10(
-            field["Campo_Normalizado"] + 0.01
-        )
-        synchronized = synchronize_real_intervals(
-            simulation,
-            field,
-            field_date_column,
-            field_value_column,
-        )
-        metrics = validation_metrics(synchronized)
-    except Exception as exc:
-        field_error = str(exc)
-
-operational = calculate_operational_metrics(
-    simulation,
-    field,
-    field_date_column,
-    field_value_column,
-    first_peak_date,
-    control_date,
-    float(alert_threshold),
-)
-
-top_metrics = st.columns(5)
-top_metrics[0].metric(
+metric_columns = st.columns(5)
+metric_columns[0].metric(
     "Primer pico",
     first_peak_date.strftime("%d/%m/%Y")
     if first_peak_date is not None
     else "No habilitado",
 )
-top_metrics[1].metric("Cobertura", f"{coverage_percent} %")
-top_metrics[2].metric("Wmax", f"{w_max_value:.3f} mm")
-top_metrics[3].metric("Ke", f"{ke_value:.3f}")
-top_metrics[4].metric(
+metric_columns[1].metric("Cobertura", f"{coverage_percent} %")
+metric_columns[2].metric("Wmax", f"{w_max_value:.3f} mm")
+metric_columns[3].metric("Ke", f"{ke_value:.3f}")
+metric_columns[4].metric(
     "TT acumulado",
     f"{thermal_time_today:.1f} °Cd",
 )
@@ -1464,391 +1093,92 @@ else:
 
 tabs = st.tabs(
     [
-        "📊 Monitor de decisión",
-        "💧 Agua y suelo",
-        "📈 Análisis estratégico",
-        "🧪 Bio-calibración",
+        "📊 Emergencia",
+        "💧 Agua y microclima",
+        "🌡️ Logística térmica",
+        "🧪 Validación",
         "📥 Exportar",
     ]
 )
 
 with tabs[0]:
-    if field_error:
-        st.warning(f"No se pudo procesar el archivo de campo: {field_error}")
+    emergence_figure = go.Figure()
+    emergence_figure.add_trace(
+        go.Scatter(
+            x=simulation["Fecha"],
+            y=simulation["EMERREL"],
+            mode="lines",
+            name="EMERREL diaria",
+        )
+    )
+    emergence_figure.add_trace(
+        go.Scatter(
+            x=simulation["Fecha"],
+            y=simulation["EMERAC_NORMALIZADA"],
+            mode="lines",
+            name="Emergencia acumulada",
+            line=dict(dash="dash"),
+        )
+    )
 
-    if field is not None and not synchronized.empty:
-        st.markdown("#### Fidelidad científica — Event-to-Event")
-        validation_row_1 = st.columns(6)
-        validation_row_1[0].metric(
-            "Pearson flujos",
-            f"{metrics['Pearson_Flujos']:.3f}",
-        )
-        validation_row_1[1].metric(
-            "NSE flujos",
-            f"{metrics['NSE_Flujos']:.3f}",
-        )
-        validation_row_1[2].metric(
-            "KGE flujos",
-            f"{metrics['KGE_Flujos']:.3f}",
-        )
-        validation_row_1[3].metric(
-            "RMSE acumulado",
-            f"{metrics['RMSE_Acumulado']:.3f}",
-        )
-        validation_row_1[4].metric(
-            "CCC acumulado",
-            f"{metrics['CCC_Acumulado']:.3f}",
-        )
-        validation_row_1[5].metric(
-            "R² acumulado",
-            f"{metrics['R2_Acumulado']:.3f}",
+    if first_peak_date is not None:
+        emergence_figure.add_vline(
+            x=first_peak_date,
+            line_dash="dot",
+            annotation_text="Primer pico habilitado",
+            annotation_position="top left",
         )
 
-        validation_row_2 = st.columns(5)
-        validation_row_2[0].metric(
-            "F1 coincidencia",
-            f"{metrics['F1_Score_Coincidencia']:.3f}",
-        )
-        validation_row_2[1].metric(
-            "Exactitud",
-            f"{metrics['Exactitud_Global']:.3f}",
-        )
-        validation_row_2[2].metric(
-            "Desfase inicio",
-            (
-                f"{operational['Desfase_Primer_Flujo_Dias']:+d} días"
-                if operational["Desfase_Primer_Flujo_Dias"] is not None
-                else "N/D"
-            ),
-        )
-        validation_row_2[3].metric(
-            "Desfase T50",
-            (
-                f"{operational['Desfase_T50_Dias']:+d} días"
-                if operational["Desfase_T50_Dias"] is not None
-                else "N/D"
-            ),
-        )
-        validation_row_2[4].metric(
-            "Lead time",
-            (
-                f"{operational['Lead_Time_Dias']} días"
-                if operational["Lead_Time_Dias"] is not None
-                else "N/D"
-            ),
-        )
-
-        confusion = pd.DataFrame(
-            [
-                {
-                    "Campo": "Con flujo",
-                    "Modelo con flujo": metrics["Hits"],
-                    "Modelo sin flujo": metrics["Misses"],
-                },
-                {
-                    "Campo": "Sin flujo",
-                    "Modelo con flujo": metrics["Falsos_Positivos"],
-                    "Modelo sin flujo": metrics["Correctos_Negativos"],
-                },
-            ]
-        )
-        st.markdown("#### Matriz de confusión por intervalos")
-        st.dataframe(confusion, width="stretch", hide_index=True)
-
-        if control_date is not None:
-            logistics_metrics = st.columns(3)
-            logistics_metrics[0].metric(
-                "Control efectivo (PEC)",
-                (
-                    f"{operational['PEC_Porcentaje']:.1f}%"
-                    if operational["PEC_Porcentaje"] is not None
-                    else "N/D"
-                ),
+    if field_raw is not None:
+        try:
+            field, field_date_column, field_value_column = (
+                canonicalize_field(field_raw)
             )
-            logistics_metrics[1].metric(
-                "Lag control vs pico campo",
-                (
-                    f"{operational['Lag_Control_vs_Pico_Campo_Dias']} días"
-                    if operational[
-                        "Lag_Control_vs_Pico_Campo_Dias"
-                    ] is not None
-                    else "N/D"
-                ),
-            )
-            logistics_metrics[2].metric(
-                "Lead time de alerta",
-                (
-                    f"{operational['Lead_Time_Dias']} días"
-                    if operational["Lead_Time_Dias"] is not None
-                    else "N/D"
-                ),
-            )
-
-    main_column, gauge_column = st.columns([2, 1])
-
-    with main_column:
-        emergence_log_figure = go.Figure()
-        add_interval_shading(
-            emergence_log_figure,
-            field,
-            field_date_column,
-        )
-        emergence_log_figure.add_trace(
-            go.Scatter(
-                x=simulation["Fecha"],
-                y=simulation["EMERREL_LOG"],
-                mode="lines",
-                name="Tasa diaria simulada (log)",
-                fill="tozeroy",
-            )
-        )
-        emergence_log_figure.add_hline(
-            y=alert_threshold_log,
-            line_dash="dash",
-            annotation_text=f"Alerta ({alert_threshold:.3f})",
-        )
-
-        if field is not None:
-            emergence_log_figure.add_trace(
+            emergence_figure.add_trace(
                 go.Scatter(
                     x=field[field_date_column],
-                    y=field["Campo_Normalizado_LOG"],
-                    mode="markers+lines",
-                    name="Campo normalizado (log)",
-                    marker=dict(size=9, symbol="diamond"),
-                    line=dict(dash="dot"),
+                    y=field["Campo_Normalizado"],
+                    mode="markers",
+                    name="Campo normalizado",
+                    marker=dict(size=9),
                 )
             )
+        except Exception as exc:
+            st.warning(f"No se pudo incorporar el campo al gráfico: {exc}")
 
-        if first_peak_date is not None:
-            emergence_log_figure.add_vline(
-                x=first_peak_date,
-                line_dash="dot",
-                annotation_text="Inicio térmico",
-            )
-        if control_date is not None:
-            emergence_log_figure.add_vline(
-                x=control_date,
-                line_dash="dot",
-                annotation_text=f"Control ({tt_control} °Cd)",
-            )
-            if residual_days > 0:
-                emergence_log_figure.add_vrect(
-                    x0=control_date,
-                    x1=control_date + pd.Timedelta(days=int(residual_days)),
-                    opacity=0.10,
-                    line_width=0,
-                    annotation_text=f"Protección {residual_days} d",
-                )
-        if control_date is not None and limit_date is not None:
-            emergence_log_figure.add_vrect(
-                x0=control_date,
-                x1=limit_date,
-                fillcolor="rgba(255, 165, 0, 0.12)",
-                line_width=0,
-                annotation_text="Ventana eficiente",
-            )
+    emergence_figure.update_layout(
+        title="Emergencia simulada",
+        xaxis_title="Fecha",
+        yaxis_title="Emergencia relativa",
+        yaxis=dict(range=[0.0, 1.05]),
+        hovermode="x unified",
+        height=520,
+    )
+    st.plotly_chart(emergence_figure, width="stretch")
 
-        emergence_log_figure.update_layout(
-            title=(
-                "Dinámica fisiológica de emergencia "
-                "(intervalos reales de monitoreo)"
-            ),
-            xaxis_title="Fecha",
-            yaxis_title="Log10(EMERREL + 0,01)",
-            hovermode="x unified",
-            height=480,
+    risk_figure = go.Figure(
+        data=go.Heatmap(
+            z=[simulation["EMERREL"].to_numpy()],
+            x=simulation["Fecha"],
+            y=["Riesgo"],
+            zmin=0.0,
+            zmax=1.0,
+            colorscale=[
+                [0.00, "green"],
+                [0.10, "green"],
+                [0.33, "yellow"],
+                [0.66, "orange"],
+                [1.00, "red"],
+            ],
+            showscale=True,
         )
-        st.plotly_chart(emergence_log_figure, width="stretch")
-
-        risk_figure = go.Figure(
-            data=go.Heatmap(
-                z=[simulation["EMERREL"].to_numpy()],
-                x=simulation["Fecha"],
-                y=["Riesgo"],
-                zmin=0.0,
-                zmax=1.0,
-                colorscale=[
-                    [0.00, "green"],
-                    [0.10, "green"],
-                    [0.33, "yellow"],
-                    [0.66, "orange"],
-                    [1.00, "red"],
-                ],
-                showscale=True,
-            )
-        )
-        risk_figure.update_layout(
-            title="Mapa diario de riesgo",
-            height=180,
-            margin=dict(t=45, b=20, l=20, r=20),
-        )
-        st.plotly_chart(risk_figure, width="stretch")
-
-    with gauge_column:
-        maximum_axis = max(float(tt_limit) * 1.2, 1.0)
-        gauge = go.Figure(
-            go.Indicator(
-                mode="gauge+number",
-                value=thermal_time_today,
-                title={"text": "TT POST-EMERGENCIA (°Cd)"},
-                gauge={
-                    "axis": {"range": [0, maximum_axis]},
-                    "steps": [
-                        {
-                            "range": [0, float(tt_control)],
-                            "color": "#4ade80",
-                        },
-                        {
-                            "range": [
-                                float(tt_control),
-                                float(tt_limit),
-                            ],
-                            "color": "#facc15",
-                        },
-                        {
-                            "range": [
-                                float(tt_limit),
-                                maximum_axis,
-                            ],
-                            "color": "#f87171",
-                        },
-                    ],
-                    "threshold": {
-                        "line": {"color": "#2563eb", "width": 6},
-                        "thickness": 0.8,
-                        "value": thermal_time_7days,
-                    },
-                },
-            )
-        )
-        gauge.add_annotation(
-            x=0.5,
-            y=-0.10,
-            text=(
-                f"Pronóstico +7 días: "
-                f"<b>{thermal_time_7days:.1f} °Cd</b>"
-            ),
-            showarrow=False,
-        )
-        gauge.update_layout(
-            height=380,
-            margin=dict(t=70, b=60, l=25, r=25),
-        )
-        st.plotly_chart(gauge, width="stretch")
-
-    if field is not None and not synchronized.empty:
-        st.markdown("#### Curvas acumuladas y rectas 1:1")
-        cumulative_column, scatter_column = st.columns([2, 1])
-
-        with cumulative_column:
-            cumulative_figure = go.Figure()
-            cumulative_figure.add_trace(
-                go.Scatter(
-                    x=synchronized["Fecha"],
-                    y=synchronized["Campo_Acumulado"] * 100,
-                    mode="markers+lines",
-                    name="Campo acumulado",
-                )
-            )
-            cumulative_figure.add_trace(
-                go.Scatter(
-                    x=synchronized["Fecha"],
-                    y=synchronized["Sim_Acumulado"] * 100,
-                    mode="lines",
-                    name="PREDWEEM acumulado",
-                    line=dict(dash="dash"),
-                )
-            )
-            cumulative_figure.update_layout(
-                title="Llenado cinético acumulado",
-                xaxis_title="Fecha",
-                yaxis_title="Emergencia acumulada (%)",
-                hovermode="x unified",
-                height=430,
-            )
-            st.plotly_chart(cumulative_figure, width="stretch")
-
-        with scatter_column:
-            flow_tab, accumulated_tab = st.tabs(
-                ["1:1 Flujos", "1:1 Acumulado"]
-            )
-            with flow_tab:
-                flow_figure = go.Figure()
-                flow_figure.add_trace(
-                    go.Scatter(
-                        x=[0, 1],
-                        y=[0, 1],
-                        mode="lines",
-                        line=dict(dash="dash"),
-                        showlegend=False,
-                    )
-                )
-                flow_figure.add_trace(
-                    go.Scatter(
-                        x=synchronized["Campo_Relativo"],
-                        y=synchronized["Sim_Relativo"],
-                        mode="markers",
-                        text=synchronized["Fecha"].dt.strftime(
-                            "%d-%m-%Y"
-                        ),
-                        hovertemplate=(
-                            "<b>%{text}</b><br>"
-                            "Obs: %{x:.3f}<br>Sim: %{y:.3f}"
-                            "<extra></extra>"
-                        ),
-                        showlegend=False,
-                    )
-                )
-                flow_figure.update_layout(
-                    title="Flujos por evento",
-                    xaxis_title="Observado",
-                    yaxis_title="Simulado",
-                    height=360,
-                )
-                st.plotly_chart(flow_figure, width="stretch")
-
-            with accumulated_tab:
-                accumulated_figure = go.Figure()
-                accumulated_figure.add_trace(
-                    go.Scatter(
-                        x=[0, 1],
-                        y=[0, 1],
-                        mode="lines",
-                        line=dict(dash="dash"),
-                        showlegend=False,
-                    )
-                )
-                accumulated_figure.add_trace(
-                    go.Scatter(
-                        x=synchronized["Campo_Acumulado"],
-                        y=synchronized["Sim_Acumulado"],
-                        mode="markers",
-                        text=synchronized["Fecha"].dt.strftime(
-                            "%d-%m-%Y"
-                        ),
-                        hovertemplate=(
-                            "<b>%{text}</b><br>"
-                            "Obs acum: %{x:.3f}<br>"
-                            "Sim acum: %{y:.3f}"
-                            "<extra></extra>"
-                        ),
-                        showlegend=False,
-                    )
-                )
-                accumulated_figure.update_layout(
-                    title=(
-                        f"Acumulado — R² "
-                        f"{metrics['R2_Acumulado']:.3f}"
-                    ),
-                    xaxis_title="Observado acumulado",
-                    yaxis_title="Simulado acumulado",
-                    height=360,
-                )
-                st.plotly_chart(
-                    accumulated_figure,
-                    width="stretch",
-                )
+    )
+    risk_figure.update_layout(
+        title="Mapa diario de riesgo",
+        height=180,
+        margin=dict(t=45, b=20, l=20, r=20),
+    )
+    st.plotly_chart(risk_figure, width="stretch")
 
 with tabs[1]:
     water_figure = go.Figure()
@@ -1857,6 +1187,7 @@ with tabs[1]:
             x=simulation["Fecha"],
             y=simulation["Prec"],
             name="Precipitación",
+            yaxis="y2",
             opacity=0.45,
         )
     )
@@ -1868,22 +1199,7 @@ with tabs[1]:
             name="Agua superficial",
         )
     )
-    water_figure.add_hline(
-        y=float(w_max_value),
-        line_dash="dot",
-        annotation_text=f"Wmax = {w_max_value:.2f} mm",
-    )
-    water_figure.update_layout(
-        title="Precipitación y retención de agua superficial",
-        xaxis_title="Fecha",
-        yaxis_title="Milímetros",
-        hovermode="x unified",
-        height=480,
-    )
-    st.plotly_chart(water_figure, width="stretch")
-
-    hydric_factor_figure = go.Figure()
-    hydric_factor_figure.add_trace(
+    water_figure.add_trace(
         go.Scatter(
             x=simulation["Fecha"],
             y=simulation["Hydric_Factor"],
@@ -1891,22 +1207,19 @@ with tabs[1]:
             name="Factor hídrico",
         )
     )
-    hydric_factor_figure.add_trace(
-        go.Scatter(
-            x=simulation["Fecha"],
-            y=simulation["Humedad_Relativa"],
-            mode="lines",
-            name="Humedad relativa",
-        )
-    )
-    hydric_factor_figure.update_layout(
-        title="Disponibilidad hídrica",
+    water_figure.update_layout(
+        title="Balance hídrico superficial",
         xaxis_title="Fecha",
-        yaxis_title="Proporción",
+        yaxis=dict(title="Agua / factor hídrico"),
+        yaxis2=dict(
+            title="Precipitación (mm)",
+            overlaying="y",
+            side="right",
+        ),
         hovermode="x unified",
-        height=400,
+        height=500,
     )
-    st.plotly_chart(hydric_factor_figure, width="stretch")
+    st.plotly_chart(water_figure, width="stretch")
 
     thermal_figure = go.Figure()
     thermal_figure.add_trace(
@@ -1940,208 +1253,135 @@ with tabs[1]:
     st.plotly_chart(thermal_figure, width="stretch")
 
 with tabs[2]:
-    st.subheader("Clasificación temporal DTW")
-    dtw_result = classify_dtw_pattern(simulation, cluster_model)
-    if dtw_result is None:
-        st.info(
-            "No hay información suficiente o no se encontró "
-            "`modelo_clusters_k3.pkl`."
-        )
-    else:
-        pattern_column, score_column = st.columns([3, 1])
-        with pattern_column:
-            dtw_figure = go.Figure()
-            dtw_figure.add_trace(
-                go.Scatter(
-                    x=dtw_result["jd_grid"],
-                    y=dtw_result["prototype"],
-                    mode="lines",
-                    name="Patrón histórico",
-                    line=dict(dash="dash"),
-                )
-            )
-            dtw_figure.add_trace(
-                go.Scatter(
-                    x=dtw_result["jd_grid"],
-                    y=dtw_result["observed_normalized"],
-                    mode="lines",
-                    name="Simulación 2026",
-                )
-            )
-            dtw_figure.update_layout(
-                title="Comparación con el patrón histórico",
-                xaxis_title="Día juliano",
-                yaxis_title="Emergencia normalizada",
-                height=430,
-            )
-            st.plotly_chart(dtw_figure, width="stretch")
-        with score_column:
-            st.success(f"### {dtw_result['name']}")
-            st.metric(
-                "DTW Score",
-                f"{dtw_result['distance']:.3f}",
-            )
-            st.dataframe(
-                pd.DataFrame(
-                    {
-                        "Patrón": [
-                            "Intermedio/Bimodal",
-                            "Temprano/Compacto",
-                            "Tardío/Extendido",
-                        ],
-                        "Distancia DTW": dtw_result["distances"][:3],
-                    }
-                ),
-                width="stretch",
-                hide_index=True,
-            )
+    logistics_columns = st.columns(3)
+    logistics_columns[0].metric(
+        "Inicio",
+        first_peak_date.strftime("%d/%m/%Y")
+        if first_peak_date is not None
+        else "N/D",
+    )
+    logistics_columns[1].metric(
+        "Fecha objetivo de control",
+        control_date.strftime("%d/%m/%Y")
+        if control_date is not None
+        else "N/D",
+    )
+    logistics_columns[2].metric(
+        "Límite de ventana",
+        limit_date.strftime("%d/%m/%Y")
+        if limit_date is not None
+        else "N/D",
+    )
 
-    if field is not None and not synchronized.empty:
-        st.subheader("Tabla Event-to-Event")
-        st.dataframe(
-            synchronized,
-            width="stretch",
-            hide_index=True,
+    if first_peak_date is not None:
+        thermal_curve = simulation[
+            simulation["Fecha"] >= first_peak_date
+        ].copy()
+        thermal_curve["DGA_cum"] = thermal_curve["DG"].cumsum()
+
+        thermal_time_figure = go.Figure()
+        thermal_time_figure.add_trace(
+            go.Scatter(
+                x=thermal_curve["Fecha"],
+                y=thermal_curve["DGA_cum"],
+                mode="lines",
+                name="Tiempo térmico acumulado",
+            )
         )
+        thermal_time_figure.add_hline(
+            y=float(tt_control),
+            line_dash="dash",
+            annotation_text="Control",
+        )
+        thermal_time_figure.add_hline(
+            y=float(tt_limit),
+            line_dash="dot",
+            annotation_text="Límite",
+        )
+        thermal_time_figure.update_layout(
+            title="Reloj logístico desde el primer pico",
+            xaxis_title="Fecha",
+            yaxis_title="Tiempo térmico (°Cd)",
+            height=470,
+        )
+        st.plotly_chart(thermal_time_figure, width="stretch")
 
 with tabs[3]:
-    st.subheader("Curva de respuesta fisiológica")
-    temperatures = np.linspace(0.0, 45.0, 200)
-    response = [
-        calculate_tt_scalar(
-            temperature,
-            float(t_base),
-            float(t_optimum),
-            float(t_critical),
+    if field_raw is None:
+        st.info(
+            "Cargue observaciones de campo para calcular las métricas."
         )
-        for temperature in temperatures
-    ]
-    response_figure = go.Figure()
-    response_figure.add_trace(
-        go.Scatter(
-            x=temperatures,
-            y=response,
-            mode="lines",
-            fill="tozeroy",
-            name="Grados-día diarios",
-        )
-    )
-    response_figure.update_layout(
-        xaxis_title="Temperatura media (°C)",
-        yaxis_title="Aporte térmico diario (°Cd)",
-        height=380,
-    )
-    st.plotly_chart(response_figure, width="stretch")
-
-    st.subheader("Calibrador biofísico 2D")
-    st.caption(
-        "Explora únicamente Wmax y cobertura/Ke. "
-        "Latencia, termoinhibición, choque hídrico y primer pico "
-        "permanecen fijos."
-    )
-
-    optimizer_columns = st.columns(4)
-    coverage_step = optimizer_columns[0].number_input(
-        "Paso cobertura (%)",
-        min_value=1,
-        max_value=20,
-        value=5,
-        step=1,
-    )
-    wmax_min = optimizer_columns[1].number_input(
-        "Wmax mínimo",
-        min_value=5.0,
-        max_value=50.0,
-        value=10.0,
-        step=1.0,
-    )
-    wmax_max = optimizer_columns[2].number_input(
-        "Wmax máximo",
-        min_value=6.0,
-        max_value=60.0,
-        value=30.0,
-        step=1.0,
-    )
-    wmax_step = optimizer_columns[3].number_input(
-        "Paso Wmax",
-        min_value=0.5,
-        max_value=10.0,
-        value=2.0,
-        step=0.5,
-    )
-
-    run_optimizer = st.button(
-        "Ejecutar barrido hídrico 2D",
-        type="primary",
-        width="stretch",
-    )
-    if run_optimizer:
-        if field_raw is None:
-            st.error(
-                "Se necesitan observaciones de campo para optimizar."
+    else:
+        try:
+            field, field_date_column, field_value_column = (
+                canonicalize_field(field_raw)
             )
-        elif float(wmax_max) <= float(wmax_min):
-            st.error("Wmax máximo debe ser mayor que Wmax mínimo.")
-        else:
-            with st.spinner("Evaluando combinaciones Wmax × cobertura..."):
-                coverage_values = np.arange(
-                    0,
-                    101,
-                    int(coverage_step),
-                    dtype=int,
-                )
-                wmax_values = np.arange(
-                    float(wmax_min),
-                    float(wmax_max) + 0.5 * float(wmax_step),
-                    float(wmax_step),
-                )
-                optimizer_results = optimize_hydric_2d(
-                    weather_raw,
-                    field_raw,
-                    ann_model,
-                    coverage_values,
-                    wmax_values,
-                    float(thermoinhibition_threshold),
-                    float(hydric_shock_threshold),
-                )
-                st.session_state["optimizer_results_integral"] = (
-                    optimizer_results
-                )
+            synchronized = synchronize_real_intervals(
+                simulation,
+                field,
+                field_date_column,
+                field_value_column,
+            )
+            metrics = validation_metrics(synchronized)
 
-    optimizer_results = st.session_state.get(
-        "optimizer_results_integral"
-    )
-    if isinstance(optimizer_results, pd.DataFrame):
-        if optimizer_results.empty:
-            st.warning("El barrido no produjo resultados.")
-        else:
-            best = optimizer_results.iloc[0]
-            best_columns = st.columns(5)
-            best_columns[0].metric(
-                "Mejor cobertura",
-                f"{int(best['Cobertura_pct'])}%",
-            )
-            best_columns[1].metric(
-                "Mejor Wmax",
-                f"{best['W_Max_mm']:.2f} mm",
-            )
-            best_columns[2].metric(
+            validation_columns = st.columns(6)
+            validation_columns[0].metric(
                 "KGE",
-                f"{best['KGE_Flujos']:.3f}",
+                f"{metrics['KGE_Flujos']:.3f}",
             )
-            best_columns[3].metric(
+            validation_columns[1].metric(
                 "NSE",
-                f"{best['NSE_Flujos']:.3f}",
+                f"{metrics['NSE_Flujos']:.3f}",
             )
-            best_columns[4].metric(
+            validation_columns[2].metric(
+                "CCC",
+                f"{metrics['CCC_Acumulado']:.3f}",
+            )
+            validation_columns[3].metric(
+                "RMSE",
+                f"{metrics['RMSE_Acumulado']:.3f}",
+            )
+            validation_columns[4].metric(
                 "F1",
-                f"{best['F1_Score']:.3f}",
+                f"{metrics['F1_Score_Coincidencia']:.3f}",
             )
+            validation_columns[5].metric(
+                "Exactitud",
+                f"{metrics['Exactitud_Global']:.3f}",
+            )
+
+            comparison_figure = go.Figure()
+            comparison_figure.add_trace(
+                go.Scatter(
+                    x=synchronized["Fecha"],
+                    y=synchronized["Campo_Relativo"],
+                    mode="markers+lines",
+                    name="Campo por intervalo",
+                )
+            )
+            comparison_figure.add_trace(
+                go.Scatter(
+                    x=synchronized["Fecha"],
+                    y=synchronized["Sim_Relativo"],
+                    mode="markers+lines",
+                    name="Simulado por intervalo",
+                )
+            )
+            comparison_figure.update_layout(
+                title="Validación Event-to-Event",
+                xaxis_title="Fecha de muestreo",
+                yaxis_title="Flujo relativo",
+                hovermode="x unified",
+                height=470,
+            )
+            st.plotly_chart(comparison_figure, width="stretch")
             st.dataframe(
-                optimizer_results.head(30),
+                synchronized,
                 width="stretch",
                 hide_index=True,
             )
+        except Exception as exc:
+            st.exception(exc)
 
 with tabs[4]:
     export_columns = [
@@ -2156,8 +1396,6 @@ with tabs[4]:
         "Cobertura_Rastrojo",
         "Ke_Suelo",
         "Modulador_Termico_Diagnostico",
-        "TMAX_suelo_diagnostica",
-        "TMIN_suelo_diagnostica",
         "W_superficial",
         "Humedad_Relativa",
         "Hydric_Factor",
@@ -2168,149 +1406,66 @@ with tabs[4]:
         "EMERREL_ANTES_FILTRO_PRIMER_PICO",
         "EMERREL",
         "EMERAC_NORMALIZADA",
-        "EMERREL_LOG",
         "DG",
     ]
     export_data = simulation[
-        [
-            column
-            for column in export_columns
-            if column in simulation.columns
-        ]
+        [column for column in export_columns if column in simulation.columns]
     ].copy()
 
+    csv_data = export_data.to_csv(index=False).encode("utf-8")
     st.download_button(
         "📥 Descargar simulación CSV",
-        data=export_data.to_csv(index=False).encode("utf-8"),
-        file_name="PREDWEEM_Lartigau_simulacion_integral.csv",
+        data=csv_data,
+        file_name="PREDWEEM_Lartigau_simulacion.csv",
         mime="text/csv",
         width="stretch",
-    )
-
-    statistical_rows = {
-        "Pearson_Flujos": metrics["Pearson_Flujos"],
-        "NSE_Flujos": metrics["NSE_Flujos"],
-        "KGE_Flujos": metrics["KGE_Flujos"],
-        "RMSE_Acumulado": metrics["RMSE_Acumulado"],
-        "CCC_Acumulado": metrics["CCC_Acumulado"],
-        "R2_Acumulado": metrics["R2_Acumulado"],
-        "F1_Score_Coincidencia": metrics[
-            "F1_Score_Coincidencia"
-        ],
-        "Exactitud_Global": metrics["Exactitud_Global"],
-        "Hits": metrics["Hits"],
-        "Misses": metrics["Misses"],
-        "Falsos_Positivos": metrics["Falsos_Positivos"],
-        "Correctos_Negativos": metrics["Correctos_Negativos"],
-        "PEC_Porcentaje": operational["PEC_Porcentaje"],
-        "Lag_Control_vs_Pico_Campo_Dias": operational[
-            "Lag_Control_vs_Pico_Campo_Dias"
-        ],
-        "Lead_Time_Dias": operational["Lead_Time_Dias"],
-        "Desfase_T50_Dias": operational["Desfase_T50_Dias"],
-        "Desfase_Primer_Flujo_Dias": operational[
-            "Desfase_Primer_Flujo_Dias"
-        ],
-    }
-    statistical_table = pd.DataFrame(
-        {
-            "Métrica": list(statistical_rows),
-            "Valor": list(statistical_rows.values()),
-        }
-    )
-
-    parameter_table = pd.DataFrame(
-        {
-            "Configuración": [
-                "Version",
-                "Cobertura_pct",
-                "Wmax_mm",
-                "Ke",
-                "Modulador_termico_diagnostico",
-                "Latencia_JD",
-                "Ventana_termica_dias",
-                "Umbral_termoinhibicion_C",
-                "Choque_hidrico_mm_3d",
-                "Umbral_primer_pico",
-                "Persistencia_dias",
-                "Lag_dias",
-                "T_base",
-                "T_optima",
-                "T_critica",
-                "TT_control",
-                "TT_limite",
-                "Residualidad_dias",
-                "Fecha_primer_pico",
-                "Fecha_control",
-                "Fecha_limite",
-            ],
-            "Valor": [
-                "vK4.9.15 Adaptada",
-                coverage_percent,
-                float(w_max_value),
-                ke_value,
-                thermal_modulator,
-                LATENCIA_JD,
-                VENTANA_TERMICA_DIAS,
-                float(thermoinhibition_threshold),
-                float(hydric_shock_threshold),
-                UMBRAL_PRIMER_PICO,
-                PERSISTENCIA_PRIMER_PICO_DIAS,
-                0,
-                float(t_base),
-                float(t_optimum),
-                float(t_critical),
-                int(tt_control),
-                int(tt_limit),
-                int(residual_days),
-                first_peak_date,
-                control_date,
-                limit_date,
-            ],
-        }
     )
 
     excel_buffer = io.BytesIO()
     with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
         export_data.to_excel(
             writer,
-            sheet_name="Data_Diaria",
+            sheet_name="Simulacion",
             index=False,
         )
-        parameter_table.to_excel(
+        pd.DataFrame(
+            [
+                {
+                    "Version": APP_VERSION,
+                    "Cobertura_pct": coverage_percent,
+                    "Ke": ke_value,
+                    "Modulador_termico_diagnostico": thermal_modulator,
+                    "Wmax_mm": float(w_max_value),
+                    "Latencia_JD": LATENCIA_JD,
+                    "Ventana_termica_dias": VENTANA_TERMICA_DIAS,
+                    "Umbral_termoinhibicion_C": float(
+                        thermoinhibition_threshold
+                    ),
+                    "Choque_hidrico_mm_3d": float(
+                        hydric_shock_threshold
+                    ),
+                    "Umbral_primer_pico": UMBRAL_PRIMER_PICO,
+                    "Persistencia_dias": (
+                        PERSISTENCIA_PRIMER_PICO_DIAS
+                    ),
+                    "Lag_dias": 0,
+                    "Fecha_primer_pico": (
+                        first_peak_date
+                        if first_peak_date is not None
+                        else pd.NaT
+                    ),
+                }
+            ]
+        ).to_excel(
             writer,
-            sheet_name="Bio_Params",
+            sheet_name="Parametros",
             index=False,
         )
-        statistical_table.to_excel(
-            writer,
-            sheet_name="Validacion_Estadistica",
-            index=False,
-        )
-        if field is not None:
-            field.to_excel(
-                writer,
-                sheet_name="Campo_Validacion",
-                index=False,
-            )
-        if not synchronized.empty:
-            synchronized.to_excel(
-                writer,
-                sheet_name="Event_to_Event",
-                index=False,
-            )
-        if isinstance(optimizer_results, pd.DataFrame):
-            if not optimizer_results.empty:
-                optimizer_results.to_excel(
-                    writer,
-                    sheet_name="Optimizador_2D",
-                    index=False,
-                )
 
     st.download_button(
-        "📊 Descargar reporte integral Excel",
+        "📊 Descargar simulación Excel",
         data=excel_buffer.getvalue(),
-        file_name="PREDWEEM_Integral_Lartigau_vK4_9_15_adaptada.xlsx",
+        file_name="PREDWEEM_Lartigau_simulacion.xlsx",
         mime=(
             "application/vnd.openxmlformats-officedocument."
             "spreadsheetml.sheet"
@@ -2320,5 +1475,5 @@ with tabs[4]:
 
 st.caption(
     "PREDWEEM by GUILLERMO R. CHANTRE · "
-    "Modelo híbrido ANN + ecofisiología + validación Event-to-Event."
+    "Modelo híbrido ANN + ecofisiología + validación de campo."
 )
