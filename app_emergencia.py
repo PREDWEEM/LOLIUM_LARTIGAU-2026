@@ -16,7 +16,7 @@ import re
 BASE = Path(__file__).resolve().parent
 SOURCE = BASE / "app_emergencia_vK4_9_15.py"
 
-UMBRAL_PRIMER_PICO_ESTABLE = 0.70
+UMBRAL_PRIMER_PICO_ESTABLE = 0.60
 PERSISTENCIA_PRIMER_PICO_DIAS = 1
 
 
