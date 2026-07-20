@@ -170,23 +170,35 @@ class PracticalANNModel:
         return emergence, np.cumsum(emergence)
 
 
-@st.cache_resource
-def load_models() -> tuple[PracticalANNModel | None, Any | None]:
-    required = {
-        "IW.npy": BASE / "IW.npy",
-        "bias_IW.npy": BASE / "bias_IW.npy",
-        "LW.npy": BASE / "LW.npy",
-        "bias_out.npy": BASE / "bias_out.npy",
-    }
-    missing = [name for name, path in required.items() if not path.exists()]
+REQUIRED_MODEL_FILES = {
+    "IW.npy": BASE / "IW.npy",
+    "bias_IW.npy": BASE / "bias_IW.npy",
+    "LW.npy": BASE / "LW.npy",
+    "bias_out.npy": BASE / "bias_out.npy",
+    "modelo_clusters_k3.pkl": BASE / "modelo_clusters_k3.pkl",
+}
+
+
+def validate_required_model_files() -> dict[str, Path]:
+    """Detiene la aplicación si falta un activo científico requerido."""
+    missing = [
+        name
+        for name, model_path in REQUIRED_MODEL_FILES.items()
+        if not model_path.is_file()
+    ]
     if missing:
         st.error(
-            "Faltan archivos del modelo neuronal: "
+            "Faltan activos requeridos del modelo PREDWEEM: "
             + ", ".join(missing)
-            + "."
+            + ". Verifique el checkout privado y el despliegue de Streamlit."
         )
-        return None, None
+        st.stop()
+    return REQUIRED_MODEL_FILES
 
+
+@st.cache_resource
+def load_models() -> tuple[PracticalANNModel, Any]:
+    required = validate_required_model_files()
     try:
         ann = PracticalANNModel(
             np.load(required["IW.npy"]),
@@ -194,19 +206,11 @@ def load_models() -> tuple[PracticalANNModel | None, Any | None]:
             np.load(required["LW.npy"]),
             np.load(required["bias_out.npy"]),
         )
-    except (OSError, ValueError) as exc:
-        st.error(f"No se pudo cargar la ANN: {exc}")
-        return None, None
-
-    cluster_model = None
-    cluster_path = BASE / "modelo_clusters_k3.pkl"
-    if cluster_path.exists():
-        try:
-            with cluster_path.open("rb") as handle:
-                cluster_model = pickle.load(handle)
-        except (OSError, pickle.PickleError, EOFError):
-            cluster_model = None
-
+        with required["modelo_clusters_k3.pkl"].open("rb") as handle:
+            cluster_model = pickle.load(handle)
+    except Exception as exc:
+        st.error(f"No se pudieron cargar los activos del modelo: {exc}")
+        st.stop()
     return ann, cluster_model
 
 
@@ -1232,6 +1236,13 @@ with st.expander("📂 1. Datos del lote", expanded=True):
 
 weather_raw = load_data(weather_upload, "meteo_daily")
 field_raw = load_data(field_upload, "LARTIGAU_campo")
+
+logo_path = BASE / "logo.png"
+if logo_path.is_file():
+    st.sidebar.image(str(logo_path), width="stretch")
+else:
+    st.sidebar.markdown("## 🌾 PREDWEEM")
+    st.sidebar.caption("Motor predictivo Lolium — Lartigau")
 
 st.sidebar.markdown("## ⚙️ Fisiología y logística")
 alert_threshold = st.sidebar.slider(
