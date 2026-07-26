@@ -59,6 +59,7 @@ PERSISTENCIA_PRIMER_PICO_DIAS = 1
 
 WMAX_PREDETERMINADO = 18.816
 COBERTURA_PREDETERMINADA = 75
+EXPONENTE_KR_PREDETERMINADO = 0.0
 
 P50_HIDRICO = 0.30
 PENDIENTE_HIDRICA = 10.0
@@ -337,17 +338,37 @@ def surface_water_balance(
     et0: np.ndarray,
     w_max: float,
     ke_soil: float,
-) -> np.ndarray:
+    kr_exponent: float = EXPONENTE_KR_PREDETERMINADO,
+    return_kr: bool = False,
+) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+    """Balance común con Kr configurable.
+
+    kr_exponent=0 conserva exactamente ET0 × Ke constante.
+    kr_exponent=1 reproduce la adaptación de Tres Arroyos.
+    """
     precipitation = np.asarray(precipitation, dtype=float)
     et0 = np.asarray(et0, dtype=float)
 
     water = np.zeros(len(precipitation), dtype=float)
+    kr_daily = np.ones(len(precipitation), dtype=float)
     if len(water) == 0:
-        return water
+        return (water, kr_daily) if return_kr else water
+    if float(w_max) <= 0.0:
+        raise ValueError("Wmax debe ser mayor que cero.")
 
+    exponent = max(float(kr_exponent), 0.0)
     water[0] = float(w_max) / 2.0
     for index in range(1, len(water)):
-        actual_evaporation = et0[index] * float(ke_soil)
+        relative_previous_water = float(
+            np.clip(water[index - 1] / float(w_max), 0.0, 1.0)
+        )
+        kr = (
+            1.0
+            if exponent == 0.0
+            else relative_previous_water ** exponent
+        )
+        kr_daily[index] = kr
+        actual_evaporation = et0[index] * float(ke_soil) * kr
         water[index] = np.clip(
             water[index - 1]
             + precipitation[index]
@@ -355,7 +376,7 @@ def surface_water_balance(
             0.0,
             float(w_max),
         )
-    return water
+    return (water, kr_daily) if return_kr else water
 
 
 def apply_first_peak_filter(
@@ -505,6 +526,7 @@ def simulate_emergence(
     w_max: float,
     thermoinhibition_threshold: float = UMBRAL_TERMINHIBICION,
     hydric_shock_threshold: float = UMBRAL_CHOQUE_HIDRICO_MM,
+    kr_exponent: float = EXPONENTE_KR_PREDETERMINADO,
 ) -> tuple[pd.DataFrame, int | None]:
     data = canonicalize_weather(raw_weather)
 
@@ -515,6 +537,7 @@ def simulate_emergence(
     ke_value, thermal_modulator = surface_parameters(coverage_percent)
     data["Cobertura_Rastrojo"] = int(coverage_percent)
     data["Ke_Suelo"] = ke_value
+    data["Exponente_Kr"] = float(kr_exponent)
     data["Modulador_Termico_Diagnostico"] = thermal_modulator
 
     # Sólo diagnóstico de microclima; no son entradas de la ANN.
@@ -558,12 +581,16 @@ def simulate_emergence(
         data["TMIN"].to_numpy(),
         LATITUD_LARTIGAU,
     )
-    data["W_superficial"] = surface_water_balance(
+    water, kr_daily = surface_water_balance(
         data["Prec"].to_numpy(),
         data["ET0"].to_numpy(),
         float(w_max),
         ke_value,
+        kr_exponent=float(kr_exponent),
+        return_kr=True,
     )
+    data["W_superficial"] = water
+    data["Kr_Diario"] = kr_daily
     relative_water = data["W_superficial"] / max(float(w_max), 1e-12)
     data["Humedad_Relativa"] = relative_water
 
@@ -1097,6 +1124,7 @@ def optimize_hydric_2d(
     wmax_values: np.ndarray,
     thermoinhibition_threshold: float,
     hydric_shock_threshold: float,
+    kr_exponent: float,
 ) -> pd.DataFrame:
     """
     Calibrador biofísico 2D adaptado.
@@ -1119,6 +1147,7 @@ def optimize_hydric_2d(
                     thermoinhibition_threshold
                 ),
                 hydric_shock_threshold=float(hydric_shock_threshold),
+                kr_exponent=float(kr_exponent),
             )
             synchronized = synchronize_real_intervals(
                 simulated,
@@ -1138,6 +1167,7 @@ def optimize_hydric_2d(
                     "Ke_Suelo": ke_value,
                     "Mod_Termico_Diagnostico": thermal_modulator,
                     "W_Max_mm": float(wmax),
+                    "Exponente_Kr": float(kr_exponent),
                     "Fecha_Primer_Pico": first_date,
                     "Pearson_Flujos": metrics["Pearson_Flujos"],
                     "NSE_Flujos": metrics["NSE_Flujos"],
@@ -1280,6 +1310,18 @@ w_max_value = st.sidebar.number_input(
     step=0.1,
     format="%.3f",
 )
+kr_exponent = st.sidebar.slider(
+    "Exponente Kr (secado superficial)",
+    min_value=0.0,
+    max_value=2.0,
+    value=EXPONENTE_KR_PREDETERMINADO,
+    step=0.1,
+    help=(
+        "0 conserva el balance histórico de Lartigau (ET0×Ke). "
+        "1 aplica la adaptación Kr de Tres Arroyos."
+    ),
+)
+st.sidebar.caption(f"Kr diario = (W/Wmax)^{kr_exponent:.1f}.")
 thermoinhibition_threshold = st.sidebar.number_input(
     "Umbral termoinhibición (°C)",
     min_value=15.0,
@@ -1343,6 +1385,7 @@ try:
             thermoinhibition_threshold
         ),
         hydric_shock_threshold=float(hydric_shock_threshold),
+        kr_exponent=float(kr_exponent),
     )
 except Exception as exc:
     st.exception(exc)
@@ -2379,6 +2422,7 @@ with tabs[3]:
                     wmax_values,
                     float(thermoinhibition_threshold),
                     float(hydric_shock_threshold),
+                    float(kr_exponent),
                 )
                 st.session_state["optimizer_results_integral"] = (
                     optimizer_results
