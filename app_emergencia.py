@@ -61,6 +61,7 @@ if (
                 "Cobertura de rastrojo (%)",
                 "Wmax superficial (mm)",
                 "Ke aplicado",
+                "Exponente Kr configurable",
             ],
             "Valor": [
                 "Lartigau (Buenos Aires)",
@@ -74,6 +75,7 @@ if (
                 globals().get("coverage_percent", ""),
                 globals().get("w_max_value", ""),
                 globals().get("ke_value", ""),
+                globals().get("kr_exponent", ""),
             ],
         }
     )
@@ -146,6 +148,7 @@ if (
                 "TT límite de ventana (°Cd)",
                 "Residualidad del herbicida (días)",
                 "Umbral de alerta temprana",
+                "Exponente Kr",
             ],
             "Valor": [
                 globals().get("LATITUD_LARTIGAU", ""),
@@ -168,6 +171,7 @@ if (
                 globals().get("tt_limit", ""),
                 globals().get("residual_days", ""),
                 globals().get("alert_threshold", ""),
+                globals().get("kr_exponent", ""),
             ],
         }
     )
