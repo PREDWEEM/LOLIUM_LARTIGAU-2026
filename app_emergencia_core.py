@@ -9,7 +9,7 @@
 # - la ANN recibe JD, TMAX, TMIN y precipitación meteorológicas;
 # - la cobertura modifica Ke y el balance hídrico, no la ANN;
 # - el modulador térmico se mantiene únicamente como diagnóstico;
-# - el inicio se habilita con 1 día de EMERREL > 0.70;
+# - el inicio se habilita con 1 día de EMERREL > 0.20;
 # - latencia fija JD 45 y termoinhibición 5 días >= 24 °C;
 # - sin fecha objetivo y sin lag temporal.
 #
@@ -21,7 +21,7 @@
 # - Termoinhibición: media móvil de 5 días >= 24 °C.
 # - Choque hídrico: precipitación acumulada de 3 días >= 45 mm,
 #   entre JD 46 y JD 110.
-# - Inicio de campaña: primer día con EMERREL > 0.70.
+# - Inicio de campaña: primer día con EMERREL > 0.20.
 # - Sin fecha objetivo y sin desplazamiento temporal artificial.
 # ===============================================================
 
@@ -54,7 +54,7 @@ UMBRAL_CHOQUE_HIDRICO_MM = 45.0
 FIN_CHOQUE_HIDRICO_JD = 110
 TECHO_CHOQUE_HIDRICO = 1.0
 
-UMBRAL_PRIMER_PICO = 0.70
+UMBRAL_PRIMER_PICO = 0.20
 PERSISTENCIA_PRIMER_PICO_DIAS = 1
 
 WMAX_PREDETERMINADO = 18.816
