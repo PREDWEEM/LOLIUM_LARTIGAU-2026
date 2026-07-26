@@ -1,0 +1,33 @@
+name: Corregir referencia post-latencia JD 26
+on:
+  push:
+    branches: [agent/bloqueo-emergencia-25-dias]
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/bloqueo-emergencia-25-dias
+      - shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import py_compile
+          path = Path('app_emergencia_core.py')
+          text = path.read_text(encoding='utf-8')
+          old = '#   entre JD 46 y JD 110.'
+          new = '#   entre JD 26 y JD 110.'
+          if text.count(old) != 1:
+              raise SystemExit(f'Se esperaba una coincidencia de {old!r} y se encontraron {text.count(old)}')
+          path.write_text(text.replace(old, new), encoding='utf-8')
+          py_compile.compile(str(path), doraise=True)
+          PY
+          rm .github/workflows/corregir-jd26.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Corrige inicio post-latencia a JD 26"
+          git push origin agent/bloqueo-emergencia-25-dias
