@@ -10,14 +10,14 @@
 # - la cobertura modifica Ke y el balance hídrico, no la ANN;
 # - el modulador térmico se mantiene únicamente como diagnóstico;
 # - el inicio se habilita con 1 día de EMERREL > 0.20;
-# - latencia fija JD 45 y termoinhibición 5 días >= 24 °C;
+# - latencia fija JD 25 y termoinhibición 5 días >= 24 °C;
 # - sin fecha objetivo y sin lag temporal.
 #
 # Criterios principales:
 # - ANN con meteorología observada: JD, TMAX, TMIN y precipitación.
 # - La cobertura modifica Ke y el balance hídrico.
 # - El modulador térmico se conserva como variable diagnóstica.
-# - Latencia fija hasta JD 45.
+# - Latencia fija hasta JD 25.
 # - Termoinhibición: media móvil de 5 días >= 24 °C.
 # - Choque hídrico: precipitación acumulada de 3 días >= 45 mm,
 #   entre JD 46 y JD 110.
@@ -45,7 +45,7 @@ import streamlit as st
 APP_VERSION = "vK4.9.15 Adaptada"
 LATITUD_LARTIGAU = -38.6166
 
-LATENCIA_JD = 45
+LATENCIA_JD = 25
 VENTANA_TERMICA_DIAS = 5
 UMBRAL_TERMINHIBICION = 24.0
 
