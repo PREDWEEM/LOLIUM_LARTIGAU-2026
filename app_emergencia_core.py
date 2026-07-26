@@ -20,7 +20,7 @@
 # - Latencia fija hasta JD 25.
 # - Termoinhibición: media móvil de 5 días >= 24 °C.
 # - Choque hídrico: precipitación acumulada de 3 días >= 45 mm,
-#   entre JD 46 y JD 110.
+#   entre JD 26 y JD 110.
 # - Inicio de campaña: primer día con EMERREL > 0.20.
 # - Sin fecha objetivo y sin desplazamiento temporal artificial.
 # ===============================================================
