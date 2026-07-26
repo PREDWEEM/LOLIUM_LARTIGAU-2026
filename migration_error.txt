@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "<stdin>", line 13, in <module>
+  File "apply-common-kr-inline.py", line 175, in <module>
+  File "apply-common-kr-inline.py", line 11, in replace_once
+RuntimeError: salida optimizador: se esperaba 1 coincidencia y se encontraron 0
