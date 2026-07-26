@@ -1,0 +1,37 @@
+name: Ejecutar corrección Kr común
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.head_ref == 'agent/kr-configurable-comun'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Aplicar y validar
+        shell: bash
+        run: |
+          python tools/apply_common_kr.py
+          python -m py_compile app_emergencia_core.py app_emergencia.py
+          git diff --check
+          rm -f tools/apply_common_kr.py
+          rm -f .github/workflows/run-common-kr-fix.yml
+
+      - name: Publicar
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Agregar Kr configurable común"
+          git push origin HEAD:agent/kr-configurable-comun
