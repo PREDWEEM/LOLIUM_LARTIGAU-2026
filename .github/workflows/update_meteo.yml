@@ -1,43 +1,141 @@
-name: Update Meteo Daily (Auto)
+name: Actualizar meteorología Lartigau
 
 on:
   schedule:
+    # 08:00 hora Argentina (UTC-3)
     - cron: "0 11 * * *"
   workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: actualizar-meteo-lartigau
+  cancel-in-progress: true
+
 jobs:
-  autoupdate:
+  actualizar:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout repository
+      - name: Descargar repositorio
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set up Python
+      - name: Configurar Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Instalar dependencias
         run: |
           python -m pip install --upgrade pip
-          pip install pandas requests python-dateutil
+          python -m pip install pandas requests
 
-      - name: Run update_meteo.py
+      - name: Actualizar ERA5-Land, puente ECMWF y MeteoBahía
+        env:
+          LATITUD: "-38.6166"
+          LONGITUD: "-61.7000"
+          RETARDO_ERA5_LAND_DIAS: "5"
         run: python update_meteo.py
 
-      - name: Commit and push changes
+      - name: Validar clasificación y continuidad
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add meteo_daily.csv || true
+          python - <<'PY'
+          import json
+          from datetime import datetime
+          from pathlib import Path
+          from zoneinfo import ZoneInfo
+
+          import pandas as pd
+
+          path = Path("meteo_daily.csv")
+          estado_path = Path("data/estado_actualizacion_meteo.json")
+          if not path.exists() or not estado_path.exists():
+              raise SystemExit("Faltan meteo_daily.csv o el estado de actualización.")
+
+          df = pd.read_csv(path)
+          requeridas = {
+              "Fecha", "TMAX", "TMIN", "Prec", "TMEDIA",
+              "Fuente", "TipoDato", "CalidadDato",
+          }
+          faltantes = requeridas.difference(df.columns)
+          if faltantes:
+              raise SystemExit(f"Faltan columnas: {sorted(faltantes)}")
+
+          fechas = pd.to_datetime(df["Fecha"], errors="coerce")
+          if fechas.isna().any() or fechas.duplicated().any():
+              raise SystemExit("Hay fechas inválidas o duplicadas.")
+
+          esperadas = pd.date_range(fechas.min(), fechas.max(), freq="D")
+          huecos = esperadas.difference(pd.DatetimeIndex(fechas))
+          if len(huecos):
+              raise SystemExit(
+                  f"La serie no es continua: {huecos.strftime('%Y-%m-%d').tolist()}"
+              )
+
+          criticas = df[["TMAX", "TMIN", "TMEDIA", "Prec"]].apply(
+              pd.to_numeric, errors="coerce"
+          )
+          if criticas.isna().any().any():
+              raise SystemExit("Hay valores meteorológicos nulos.")
+          if (criticas["TMAX"] < criticas["TMIN"]).any():
+              raise SystemExit("Hay TMAX menor que TMIN.")
+          if (criticas["Prec"] < 0).any():
+              raise SystemExit("Hay precipitación negativa.")
+
+          hoy = datetime.now(
+              ZoneInfo("America/Argentina/Buenos_Aires")
+          ).date()
+          pasadas = fechas.dt.date < hoy
+          futuras = fechas.dt.date >= hoy
+          if df.loc[pasadas, "TipoDato"].astype(str).eq("Pronostico").any():
+              raise SystemExit("Persisten pronósticos vencidos en el histórico.")
+          if not df.loc[futuras, "Fuente"].astype(str).eq(
+              "METEOBAHIA_XML_CORONEL_FALCON"
+          ).all():
+              raise SystemExit(
+                  "El tramo futuro no proviene exclusivamente de MeteoBahía."
+              )
+
+          estado = json.loads(estado_path.read_text(encoding="utf-8"))
+          if estado.get("huecos_finales"):
+              raise SystemExit(
+                  f"El estado reporta huecos: {estado['huecos_finales']}"
+              )
+          if estado.get("fuente_historica") != "ERA5_LAND":
+              raise SystemExit(
+                  "La fuente histórica no quedó registrada como ERA5_LAND."
+              )
+          if estado.get("fuente_pronostico") != (
+              "METEOBAHIA_XML_CORONEL_FALCON"
+          ):
+              raise SystemExit(
+                  "La fuente futura no quedó registrada como MeteoBahía."
+              )
+
+          print("✅ Serie trazable, continua y temporalmente coherente.")
+          PY
+
+      - name: Guardar archivos actualizados
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add \
+            meteo_daily.csv \
+            data/era5_land_lartigau.csv \
+            data/estado_actualizacion_meteo.json \
+            data/meteo_falcon_pronosticos_archivados_2026.csv \
+            data/historico_pronosticos/ || true
+
           if git diff --cached --quiet; then
-            echo "No changes to commit."
-          else
-            git commit -m "Auto-update meteo_daily.csv ($(date -u +'%Y-%m-%d %H:%M UTC'))"
-            git push
+            echo "No hay cambios para guardar."
+            exit 0
           fi
+
+          git commit -m "Actualiza ERA5-Land y MeteoBahía Lartigau"
+          git pull --rebase origin main
+          git push origin HEAD:main
