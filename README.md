@@ -16,6 +16,18 @@ PREDWEEM es una herramienta de apoyo a la toma de decisiones agronómicas basada
 
 La implementación de este repositorio está orientada a **Lartigau** y debe utilizarse considerando el dominio geográfico, climático y agronómico para el cual fue configurada, así como su estado específico de validación.
 
+## Fuentes meteorológicas operativas
+
+La serie meteorológica distingue explícitamente el origen y el tipo de dato:
+
+- **ERA5-Land**: reanálisis histórico desde el 1 de enero de 2026. Es información de grilla y no una observación puntual de estación.
+- **ECMWF IFS histórico**: puente provisional para fechas vencidas todavía no disponibles en ERA5-Land o para eventuales huecos internos.
+- **MeteoBahía XML — Coronel Falcón**: pronóstico determinístico utilizado exclusivamente desde la fecha actual en adelante.
+
+El antiguo `meteo_daily.csv`, formado por pronósticos MeteoBahía que quedaban archivados al vencer, se conserva una sola vez en `data/meteo_falcon_pronosticos_archivados_2026.csv`. No se reutiliza como meteorología histórica.
+
+El archivo operativo incluye `Fuente`, `TipoDato` y `CalidadDato` para evitar que un pronóstico vencido vuelva a confundirse con observación o reanálisis. Las columnas `TMAX`, `TMIN` y `Prec` continúan siendo compatibles con la ANN y el motor biofísico existentes.
+
 ## Condiciones de uso
 
 No se concede licencia de uso por el solo hecho de acceder al repositorio. Cualquier utilización académica, técnica, institucional o comercial que exceda la visualización del contenido requiere autorización previa y escrita del titular de los derechos correspondientes.
