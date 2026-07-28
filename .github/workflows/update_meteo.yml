@@ -33,7 +33,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pandas requests
 
-      - name: Actualizar ERA5-Land, puente ECMWF y MeteoBahía
+      - name: Actualizar ERA5-Seamless, puente ECMWF y MeteoBahía
         env:
           LATITUD: "-38.6166"
           LONGITUD: "-61.7000"
@@ -99,14 +99,30 @@ jobs:
                   "El tramo futuro no proviene exclusivamente de MeteoBahía."
               )
 
+          reanalisis = df["TipoDato"].astype(str).eq("Reanalisis")
+          if reanalisis.any() and not df.loc[reanalisis, "Fuente"].astype(str).eq(
+              "ERA5_SEAMLESS"
+          ).all():
+              raise SystemExit(
+                  "El reanálisis histórico no quedó registrado como ERA5_SEAMLESS."
+              )
+
           estado = json.loads(estado_path.read_text(encoding="utf-8"))
           if estado.get("huecos_finales"):
               raise SystemExit(
                   f"El estado reporta huecos: {estado['huecos_finales']}"
               )
-          if estado.get("fuente_historica") != "ERA5_LAND":
+          if estado.get("fuente_historica") != "ERA5_SEAMLESS":
               raise SystemExit(
-                  "La fuente histórica no quedó registrada como ERA5_LAND."
+                  "La fuente histórica no quedó registrada como ERA5_SEAMLESS."
+              )
+          if estado.get("fuente_temperatura_historica") != "ERA5_LAND":
+              raise SystemExit(
+                  "La temperatura histórica no quedó registrada como ERA5_LAND."
+              )
+          if estado.get("fuente_precipitacion_historica") != "ERA5":
+              raise SystemExit(
+                  "La precipitación histórica no quedó registrada como ERA5."
               )
           if estado.get("fuente_pronostico") != (
               "METEOBAHIA_XML_CORONEL_FALCON"
@@ -136,6 +152,6 @@ jobs:
             exit 0
           fi
 
-          git commit -m "Actualiza ERA5-Land y MeteoBahía Lartigau"
+          git commit -m "Actualiza ERA5-Seamless y MeteoBahía Lartigau"
           git pull --rebase origin main
           git push origin HEAD:main
