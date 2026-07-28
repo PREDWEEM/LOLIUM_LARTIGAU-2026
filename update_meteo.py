@@ -1,15 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Meteorología trazable PREDWEEM Lartigau 2026.
+"""Meteorología PREDWEEM Lartigau 2026.
 
-ERA5-Seamless = temperatura ERA5-Land + precipitación ERA5 para el
-reanálisis histórico; ECMWF IFS = puente provisional; MeteoBahía/Coronel
-Falcón = pronóstico desde hoy. El CSV legado formado por pronósticos vencidos
-se archiva una sola vez y no se reutiliza.
+Histórico operativo: pronósticos MeteoBahía archivados (no observaciones).
+Tramo vigente/futuro: MeteoBahía XML de Coronel Falcón.
+No utiliza ERA5, ERA5-Land, ERA5-Seamless ni ECMWF histórico.
 """
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import sys
 import time
@@ -22,23 +20,18 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import requests
 
-LATITUD = float(os.getenv("LATITUD", "-38.6166"))
-LONGITUD = float(os.getenv("LONGITUD", "-61.7000"))
 ZONA_HORARIA = "America/Argentina/Buenos_Aires"
 CAMPANIA_START = date(2026, 1, 1)
-RETARDO_ERA5_LAND_DIAS = int(os.getenv("RETARDO_ERA5_LAND_DIAS", "5"))
 TBASE = 2.0
-URL_ARCHIVE = "https://archive-api.open-meteo.com/v1/archive"
 URL_XML = "https://meteobahia.com.ar/scripts/forecast/for-cf.xml"
 ARCHIVO_MAESTRO = Path("meteo_daily.csv")
-ARCHIVO_ERA5 = Path("data/era5_land_lartigau.csv")
+ARCHIVO_HISTORICO = Path("data/meteo_falcon_pronosticos_archivados_2026.csv")
 ARCHIVO_ESTADO = Path("data/estado_actualizacion_meteo.json")
-ARCHIVO_LEGACY = Path("data/meteo_falcon_pronosticos_archivados_2026.csv")
 DIR_PRONOSTICOS = Path("data/historico_pronosticos")
-FUENTE_REANALISIS = "ERA5_SEAMLESS"
-CALIDAD_REANALISIS = (
-    "Temperatura_ERA5_Land_0.1_Precipitacion_ERA5_0.25_sin_correccion_local"
-)
+FUENTE_HISTORICA = "METEOBAHIA_XML_ARCHIVADO"
+FUENTE_PRONOSTICO = "METEOBAHIA_XML_CORONEL_FALCON"
+TIPO_HISTORICO = "Historico_pronostico"
+CALIDAD_HISTORICA = "Pronostico_MeteoBahia_archivado_no_observado"
 COLUMNAS = [
     "Fecha", "TMAX", "TMIN", "Prec", "TMEDIA", "GD_Tb2", "Fuente",
     "TipoDato", "CalidadDato", "Latitud_grilla", "Longitud_grilla",
@@ -54,13 +47,13 @@ def utc_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def get(url: str, *, params=None, headers=None, timeout=90) -> requests.Response:
+def get(url: str, *, headers=None, timeout=30) -> requests.Response:
     ultimo: Exception | None = None
     for intento in range(1, 5):
         try:
-            r = requests.get(url, params=params, headers=headers, timeout=timeout)
-            r.raise_for_status()
-            return r
+            respuesta = requests.get(url, headers=headers, timeout=timeout)
+            respuesta.raise_for_status()
+            return respuesta
         except requests.RequestException as error:
             ultimo = error
             print(f"⚠️ HTTP {intento}/4: {error}")
@@ -77,172 +70,13 @@ def columnas(df: pd.DataFrame) -> pd.DataFrame:
     return salida[COLUMNAS]
 
 
-def escribir(df: pd.DataFrame, path: Path) -> None:
+def escribir_csv(df: pd.DataFrame, path: Path, *, float_format: str = "%.3f") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    df.to_csv(tmp, index=False, float_format="%.3f")
+    temporal = path.with_suffix(path.suffix + ".tmp")
+    df.to_csv(temporal, index=False, float_format=float_format)
     if path.exists():
         shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
-    tmp.replace(path)
-
-
-def diario(
-    fechas, tmax, tmin, tmedia, prec, *, fuente, tipo, calidad, payload
-) -> pd.DataFrame:
-    df = pd.DataFrame({
-        "Fecha": pd.to_datetime(pd.Series(fechas), errors="coerce"),
-        "TMAX": pd.to_numeric(pd.Series(tmax), errors="coerce"),
-        "TMIN": pd.to_numeric(pd.Series(tmin), errors="coerce"),
-        "Prec": pd.to_numeric(pd.Series(prec), errors="coerce"),
-    })
-    df["TMEDIA"] = (
-        (df["TMAX"] + df["TMIN"]) / 2
-        if tmedia is None
-        else pd.to_numeric(pd.Series(tmedia), errors="coerce")
-    )
-    derivar = df["TMEDIA"].isna() & df["TMAX"].notna() & df["TMIN"].notna()
-    df.loc[derivar, "TMEDIA"] = (
-        df.loc[derivar, "TMAX"] + df.loc[derivar, "TMIN"]
-    ) / 2
-    df = df.dropna(subset=["Fecha", "TMAX", "TMIN", "TMEDIA", "Prec"])
-    df["Fecha"] = df["Fecha"].dt.normalize()
-    df = df.loc[
-        df["TMAX"].between(-25, 55)
-        & df["TMIN"].between(-35, 45)
-        & df["TMEDIA"].between(-35, 55)
-        & (df["TMAX"] >= df["TMIN"])
-        & df["Prec"].between(0, 500)
-    ].copy()
-    df["GD_Tb2"] = (df["TMEDIA"] - TBASE).clip(lower=0)
-    df["Fuente"], df["TipoDato"], df["CalidadDato"] = fuente, tipo, calidad
-    df["Latitud_grilla"] = payload.get("latitude", pd.NA)
-    df["Longitud_grilla"] = payload.get("longitude", pd.NA)
-    df["Elevacion_grilla_m"] = payload.get("elevation", pd.NA)
-    df["Emision_UTC"] = utc_iso()
-    df["Fecha"] = df["Fecha"].dt.strftime("%Y-%m-%d")
-    return columnas(
-        df.drop_duplicates("Fecha", keep="last")
-        .sort_values("Fecha")
-        .reset_index(drop=True)
-    )
-
-
-def open_meteo(
-    inicio: date,
-    fin: date,
-    modelo: str,
-    fuente: str,
-    tipo: str,
-    calidad: str,
-) -> pd.DataFrame:
-    if inicio > fin:
-        return pd.DataFrame(columns=COLUMNAS)
-    params = {
-        "latitude": LATITUD,
-        "longitude": LONGITUD,
-        "start_date": inicio.isoformat(),
-        "end_date": fin.isoformat(),
-        "daily": (
-            "temperature_2m_max,temperature_2m_min,"
-            "temperature_2m_mean,precipitation_sum"
-        ),
-        "models": modelo,
-        "timezone": ZONA_HORARIA,
-        "temperature_unit": "celsius",
-        "precipitation_unit": "mm",
-        "cell_selection": "land",
-    }
-    payload = get(URL_ARCHIVE, params=params).json()
-    if payload.get("error"):
-        raise ValueError(
-            f"{modelo} respondió error: {payload.get('reason', 'sin detalle')}"
-        )
-    d = payload.get("daily", {})
-    requeridas = {
-        "time",
-        "temperature_2m_max",
-        "temperature_2m_min",
-        "precipitation_sum",
-    }
-    if requeridas.difference(d):
-        raise ValueError(
-            f"{modelo} no devolvió todas las variables diarias: "
-            f"{sorted(requeridas.difference(d))}"
-        )
-    salida = diario(
-        d["time"],
-        d["temperature_2m_max"],
-        d["temperature_2m_min"],
-        d.get("temperature_2m_mean"),
-        d["precipitation_sum"],
-        fuente=fuente,
-        tipo=tipo,
-        calidad=calidad,
-        payload=payload,
-    )
-    if salida.empty:
-        n_tmax = pd.Series(d.get("temperature_2m_max", [])).notna().sum()
-        n_tmin = pd.Series(d.get("temperature_2m_min", [])).notna().sum()
-        n_prec = pd.Series(d.get("precipitation_sum", [])).notna().sum()
-        raise ValueError(
-            f"{modelo} no devolvió días válidos entre {inicio} y {fin} "
-            f"(TMAX={n_tmax}, TMIN={n_tmin}, Prec={n_prec})."
-        )
-    return salida
-
-
-def descargar_era5(inicio: date, fin: date) -> pd.DataFrame:
-    print(
-        f"🌍 ERA5-Seamless: temperatura ERA5-Land + precipitación ERA5, "
-        f"{inicio} a {fin}"
-    )
-    return open_meteo(
-        inicio,
-        fin,
-        "era5_seamless",
-        FUENTE_REANALISIS,
-        "Reanalisis",
-        CALIDAD_REANALISIS,
-    )
-
-
-def leer_cache_era5() -> pd.DataFrame:
-    if not ARCHIVO_ERA5.exists():
-        raise FileNotFoundError("No existe caché ERA5 histórica.")
-    df = columnas(pd.read_csv(ARCHIVO_ERA5))
-    df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce").dt.strftime(
-        "%Y-%m-%d"
-    )
-    df = df.dropna(subset=["Fecha"]).drop_duplicates("Fecha", keep="last")
-    fuentes_validas = {FUENTE_REANALISIS, "ERA5_LAND"}
-    df = df.loc[df["Fuente"].astype(str).isin(fuentes_validas)].copy()
-    if df.empty:
-        raise ValueError("La caché ERA5 no contiene filas válidas.")
-    df["Fuente"] = FUENTE_REANALISIS
-    df["CalidadDato"] = CALIDAD_REANALISIS
-    return df.sort_values("Fecha").reset_index(drop=True)
-
-
-def obtener_era5(inicio: date, fin: date) -> tuple[pd.DataFrame, str]:
-    try:
-        df = descargar_era5(inicio, fin)
-        escribir(df, ARCHIVO_ERA5)
-        return df, "ERA5_Seamless_remoto"
-    except Exception as error:
-        print(f"⚠️ Falló ERA5-Seamless remoto: {error}")
-        return leer_cache_era5(), "ERA5_Seamless_cache"
-
-
-def puente(inicio: date, fin: date) -> pd.DataFrame:
-    print(f"🧩 ECMWF IFS provisional: {inicio} a {fin}")
-    return open_meteo(
-        inicio,
-        fin,
-        "ecmwf_ifs",
-        "ECMWF_IFS_HISTORICO",
-        "Provisional",
-        "Provisional_hasta_disponibilidad_ERA5_Seamless",
-    )
+    temporal.replace(path)
 
 
 def numero(valor: Any) -> float | None:
@@ -253,20 +87,81 @@ def numero(valor: Any) -> float | None:
         return None
 
 
+def normalizar(
+    df: pd.DataFrame,
+    *,
+    fuente: str,
+    tipo: str,
+    calidad: str,
+    emision_utc: str,
+) -> pd.DataFrame:
+    requeridas = {"Fecha", "TMAX", "TMIN", "Prec"}
+    faltantes = requeridas.difference(df.columns)
+    if faltantes:
+        raise ValueError(f"Faltan columnas meteorológicas: {sorted(faltantes)}")
+
+    salida = df[["Fecha", "TMAX", "TMIN", "Prec"]].copy()
+    salida["Fecha"] = pd.to_datetime(salida["Fecha"], errors="coerce").dt.normalize()
+    for columna in ["TMAX", "TMIN", "Prec"]:
+        salida[columna] = pd.to_numeric(salida[columna], errors="coerce")
+
+    salida = salida.dropna(subset=["Fecha", "TMAX", "TMIN", "Prec"])
+    salida = salida.loc[
+        salida["TMAX"].between(-25, 55)
+        & salida["TMIN"].between(-35, 45)
+        & (salida["TMAX"] >= salida["TMIN"])
+        & salida["Prec"].between(0, 500)
+    ].copy()
+    salida["TMEDIA"] = (salida["TMAX"] + salida["TMIN"]) / 2
+    salida["GD_Tb2"] = (salida["TMEDIA"] - TBASE).clip(lower=0)
+    salida["Fuente"] = fuente
+    salida["TipoDato"] = tipo
+    salida["CalidadDato"] = calidad
+    salida["Latitud_grilla"] = pd.NA
+    salida["Longitud_grilla"] = pd.NA
+    salida["Elevacion_grilla_m"] = pd.NA
+    salida["Emision_UTC"] = emision_utc
+    salida["Fecha"] = salida["Fecha"].dt.strftime("%Y-%m-%d")
+    return columnas(
+        salida.drop_duplicates("Fecha", keep="last")
+        .sort_values("Fecha")
+        .reset_index(drop=True)
+    )
+
+
+def leer_archivo_historico() -> pd.DataFrame:
+    if not ARCHIVO_HISTORICO.exists():
+        raise FileNotFoundError(
+            f"No existe el histórico requerido: {ARCHIVO_HISTORICO}"
+        )
+    bruto = pd.read_csv(ARCHIVO_HISTORICO)
+    historico = normalizar(
+        bruto,
+        fuente=FUENTE_HISTORICA,
+        tipo=TIPO_HISTORICO,
+        calidad=CALIDAD_HISTORICA,
+        emision_utc="No_disponible_archivo",
+    )
+    if historico.empty:
+        raise ValueError("El archivo histórico MeteoBahía no contiene filas válidas.")
+    return historico
+
+
 def meteobahia() -> pd.DataFrame:
     print("📡 MeteoBahía XML / Coronel Falcón")
-    r = get(
+    respuesta = get(
         URL_XML,
         headers={
             "User-Agent": "Mozilla/5.0",
             "Referer": "https://meteobahia.com.ar/",
+            "Accept": "application/xml,text/xml;q=0.9,*/*;q=0.8",
         },
         timeout=30,
     )
-    filas = []
-    for d in ET.fromstring(r.content).findall(".//forecast/tabular/day"):
+    filas: list[dict[str, Any]] = []
+    for dia in ET.fromstring(respuesta.content).findall(".//forecast/tabular/day"):
         def valor(tag: str):
-            nodo = d.find(f"./{tag}")
+            nodo = dia.find(f"./{tag}")
             return nodo.get("value") if nodo is not None else None
 
         filas.append({
@@ -275,28 +170,24 @@ def meteobahia() -> pd.DataFrame:
             "TMIN": numero(valor("tmin")),
             "Prec": numero(valor("precip")),
         })
+
     if not filas:
         raise ValueError("El XML de MeteoBahía no contiene días procesables.")
-    x = pd.DataFrame(filas)
-    df = diario(
-        x.Fecha,
-        x.TMAX,
-        x.TMIN,
-        None,
-        x.Prec,
-        fuente="METEOBAHIA_XML_CORONEL_FALCON",
+
+    emision = utc_iso()
+    pronostico = normalizar(
+        pd.DataFrame(filas),
+        fuente=FUENTE_PRONOSTICO,
         tipo="Pronostico",
         calidad="Pronostico_deterministico_Coronel_Falcon",
-        payload={},
+        emision_utc=emision,
     )
     hoy = hoy_argentina()
-    df = df.loc[pd.to_datetime(df.Fecha).dt.date >= hoy].copy()
-    if df.empty or pd.to_datetime(df.Fecha).min().date() != hoy:
+    fechas = pd.to_datetime(pronostico["Fecha"], errors="coerce")
+    pronostico = pronostico.loc[fechas.dt.date >= hoy].copy()
+    if pronostico.empty or pd.to_datetime(pronostico["Fecha"]).min().date() != hoy:
         raise ValueError("MeteoBahía no incluye la fecha actual.")
-    DIR_PRONOSTICOS.mkdir(parents=True, exist_ok=True)
-    marca = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    escribir(df, DIR_PRONOSTICOS / f"meteobahia_coronel_falcon_{marca}.csv")
-    return df
+    return pronostico.reset_index(drop=True)
 
 
 def faltantes(df: pd.DataFrame, inicio: date, fin: date) -> list[date]:
@@ -304,146 +195,138 @@ def faltantes(df: pd.DataFrame, inicio: date, fin: date) -> list[date]:
         return []
     esperadas = pd.date_range(inicio, fin, freq="D")
     presentes = pd.DatetimeIndex(
-        pd.to_datetime(df.Fecha, errors="coerce").dropna()
+        pd.to_datetime(df["Fecha"], errors="coerce").dropna()
     ).normalize()
-    return [x.date() for x in esperadas.difference(presentes)]
+    return [marca.date() for marca in esperadas.difference(presentes)]
 
 
-def rangos(fechas: list[date]) -> list[tuple[date, date]]:
-    if not fechas:
-        return []
-    fechas = sorted(set(fechas))
-    salida = []
-    inicio = anterior = fechas[0]
-    for actual in fechas[1:]:
-        if actual == anterior + timedelta(days=1):
-            anterior = actual
-        else:
-            salida.append((inicio, anterior))
-            inicio = anterior = actual
-    salida.append((inicio, anterior))
-    return salida
-
-
-def validar(df: pd.DataFrame, hoy: date, fin: date) -> None:
-    fechas = pd.to_datetime(df.Fecha, errors="coerce")
-    if df.empty or fechas.isna().any() or fechas.duplicated().any():
+def validar(total: pd.DataFrame, hoy: date, fin: date) -> None:
+    fechas = pd.to_datetime(total["Fecha"], errors="coerce")
+    if total.empty or fechas.isna().any() or fechas.duplicated().any():
         raise ValueError("La serie está vacía o contiene fechas inválidas/duplicadas.")
-    c = df[["TMAX", "TMIN", "TMEDIA", "Prec"]].apply(
+
+    criticas = total[["TMAX", "TMIN", "TMEDIA", "Prec"]].apply(
         pd.to_numeric, errors="coerce"
     )
-    if c.isna().any().any() or (c.TMAX < c.TMIN).any() or (c.Prec < 0).any():
-        raise ValueError("Hay valores meteorológicos nulos o físicamente inválidos.")
-    huecos = faltantes(df, CAMPANIA_START, fin)
+    if criticas.isna().any().any():
+        raise ValueError("Hay valores meteorológicos nulos.")
+    if (criticas["TMAX"] < criticas["TMIN"]).any() or (criticas["Prec"] < 0).any():
+        raise ValueError("Hay valores meteorológicos físicamente inválidos.")
+
+    huecos = faltantes(total, CAMPANIA_START, fin)
     if huecos:
         raise ValueError(
             "La serie no es continua: "
-            + ", ".join(x.isoformat() for x in huecos[:20])
+            + ", ".join(fecha.isoformat() for fecha in huecos[:20])
         )
-    pasadas, futuras = fechas.dt.date < hoy, fechas.dt.date >= hoy
-    if not futuras.any():
-        raise ValueError("No hay pronóstico desde hoy.")
-    if df.loc[pasadas, "TipoDato"].astype(str).eq("Pronostico").any():
-        raise ValueError("Persisten pronósticos vencidos en el histórico.")
-    if not df.loc[futuras, "Fuente"].astype(str).eq(
-        "METEOBAHIA_XML_CORONEL_FALCON"
-    ).all():
-        raise ValueError("El tramo futuro no proviene exclusivamente de MeteoBahía.")
+
+    pasadas = fechas.dt.date < hoy
+    futuras = fechas.dt.date >= hoy
+    if not pasadas.any() or not futuras.any():
+        raise ValueError("Deben existir histórico y pronóstico desde hoy.")
+    if not total.loc[pasadas, "Fuente"].astype(str).eq(FUENTE_HISTORICA).all():
+        raise ValueError("El histórico no proviene exclusivamente del archivo MeteoBahía.")
+    if not total.loc[pasadas, "TipoDato"].astype(str).eq(TIPO_HISTORICO).all():
+        raise ValueError("El histórico no quedó identificado como pronóstico archivado.")
+    if not total.loc[futuras, "Fuente"].astype(str).eq(FUENTE_PRONOSTICO).all():
+        raise ValueError("El tramo futuro no proviene exclusivamente de MeteoBahía XML.")
+    if total["Fuente"].astype(str).str.contains("ERA5|ECMWF", case=False, regex=True).any():
+        raise ValueError("Persisten fuentes ERA5 o ECMWF en la serie operativa.")
 
 
-def archivar_legacy() -> bool:
-    if ARCHIVO_LEGACY.exists() or not ARCHIVO_MAESTRO.exists():
-        return False
-    if "Fuente" in pd.read_csv(ARCHIVO_MAESTRO, nrows=0).columns:
-        return False
-    ARCHIVO_LEGACY.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(ARCHIVO_MAESTRO, ARCHIVO_LEGACY)
-    print(f"🗄️ Serie antigua archivada en {ARCHIVO_LEGACY}")
-    return True
+def actualizar_archivo(historico: pd.DataFrame, pronostico: pd.DataFrame) -> pd.DataFrame:
+    combinado = pd.concat([
+        historico[["Fecha", "TMAX", "TMIN", "Prec"]],
+        pronostico[["Fecha", "TMAX", "TMIN", "Prec"]],
+    ], ignore_index=True)
+    combinado["Fecha"] = pd.to_datetime(combinado["Fecha"], errors="coerce")
+    combinado = (
+        combinado.dropna(subset=["Fecha"])
+        .sort_values("Fecha")
+        .drop_duplicates("Fecha", keep="last")
+    )
+    combinado["Fecha"] = combinado["Fecha"].dt.strftime("%Y-%m-%d")
+    return combinado.reset_index(drop=True)
 
 
 def ejecutar() -> pd.DataFrame:
-    legacy_creado = archivar_legacy()
-    hoy, ayer = hoy_argentina(), hoy_argentina() - timedelta(days=1)
-    era5, estado_era5 = obtener_era5(
-        CAMPANIA_START,
-        hoy - timedelta(days=RETARDO_ERA5_LAND_DIAS),
+    hoy = hoy_argentina()
+    ayer = hoy - timedelta(days=1)
+    historico_base = leer_archivo_historico()
+    pronostico = meteobahia()
+
+    archivo_actualizado = actualizar_archivo(historico_base, pronostico)
+    historico = normalizar(
+        archivo_actualizado,
+        fuente=FUENTE_HISTORICA,
+        tipo=TIPO_HISTORICO,
+        calidad=CALIDAD_HISTORICA,
+        emision_utc="No_disponible_archivo",
     )
-    huecos = faltantes(era5, CAMPANIA_START, ayer)
-    rs = rangos(huecos)
-    bloques = [puente(i, f) for i, f in rs]
-    prov = (
-        columnas(pd.concat(bloques, ignore_index=True))
-        if bloques
-        else pd.DataFrame(columns=COLUMNAS)
-    )
-    pron = meteobahia()
-    total = columnas(pd.concat([era5, prov, pron], ignore_index=True))
-    total["Fecha_dt"] = pd.to_datetime(total.Fecha, errors="coerce")
-    total["_p"] = total.TipoDato.map({
-        "Reanalisis": 0,
-        "Provisional": 1,
-        "Pronostico": 2,
-    }).fillna(9)
+    fechas_historicas = pd.to_datetime(historico["Fecha"], errors="coerce")
+    historico = historico.loc[
+        (fechas_historicas.dt.date >= CAMPANIA_START)
+        & (fechas_historicas.dt.date <= ayer)
+    ].copy()
+
+    total = columnas(pd.concat([historico, pronostico], ignore_index=True))
+    total["Fecha_dt"] = pd.to_datetime(total["Fecha"], errors="coerce")
     total = (
         total.dropna(subset=["Fecha_dt"])
-        .sort_values(["Fecha_dt", "_p"])
-        .drop_duplicates("Fecha_dt", keep="first")
+        .sort_values("Fecha_dt")
+        .drop_duplicates("Fecha_dt", keep="last")
         .sort_values("Fecha_dt")
     )
-    fin = total.Fecha_dt.max().date()
-    total = total.loc[
-        (total.Fecha_dt.dt.date >= CAMPANIA_START)
-        & (total.Fecha_dt.dt.date <= fin)
-    ].copy()
-    total["Fecha"] = total.Fecha_dt.dt.strftime("%Y-%m-%d")
-    total = columnas(total.drop(columns=["Fecha_dt", "_p"])).reset_index(
-        drop=True
-    )
+    fin = total["Fecha_dt"].max().date()
+    total["Fecha"] = total["Fecha_dt"].dt.strftime("%Y-%m-%d")
+    total = columnas(total.drop(columns=["Fecha_dt"])).reset_index(drop=True)
     validar(total, hoy, fin)
-    escribir(total, ARCHIVO_MAESTRO)
+
+    escribir_csv(total, ARCHIVO_MAESTRO)
+    escribir_csv(
+        archivo_actualizado[["Fecha", "TMAX", "TMIN", "Prec"]],
+        ARCHIVO_HISTORICO,
+        float_format="%.1f",
+    )
+    DIR_PRONOSTICOS.mkdir(parents=True, exist_ok=True)
+    marca = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    escribir_csv(
+        pronostico,
+        DIR_PRONOSTICOS / f"meteobahia_coronel_falcon_{marca}.csv",
+    )
+
     estado = {
         "ejecucion_utc": utc_iso(),
         "sitio": "Lartigau",
-        "latitud": LATITUD,
-        "longitud": LONGITUD,
         "inicio_campania": CAMPANIA_START.isoformat(),
-        "fuente_historica": FUENTE_REANALISIS,
-        "fuente_temperatura_historica": "ERA5_LAND",
-        "fuente_precipitacion_historica": "ERA5",
-        "estado_era5_land": estado_era5,
-        "tipo_historico": "Reanalisis",
-        "fin_era5_land": str(era5.Fecha.max()),
-        "retardo_era5_land_dias": RETARDO_ERA5_LAND_DIAS,
-        "fuente_puente": "ECMWF_IFS_HISTORICO" if len(prov) else None,
-        "rangos_provisionales": [
-            {"inicio": i.isoformat(), "fin": f.isoformat()} for i, f in rs
-        ],
-        "filas_provisionales": len(prov),
-        "fuente_pronostico": "METEOBAHIA_XML_CORONEL_FALCON",
-        "inicio_pronostico": str(pron.Fecha.min()),
-        "fin_pronostico": str(pron.Fecha.max()),
-        "archivo_pronosticos_legacy": (
-            str(ARCHIVO_LEGACY) if ARCHIVO_LEGACY.exists() else None
-        ),
-        "archivo_pronosticos_legacy_creado_en_esta_ejecucion": legacy_creado,
+        "fuente_historica": FUENTE_HISTORICA,
+        "tipo_historico": TIPO_HISTORICO,
+        "calidad_historica": CALIDAD_HISTORICA,
+        "naturaleza_historico": "Pronosticos MeteoBahia archivados; no son observaciones de estacion",
+        "archivo_historico": str(ARCHIVO_HISTORICO),
+        "inicio_historico": str(historico["Fecha"].min()),
+        "fin_historico": str(historico["Fecha"].max()),
+        "filas_historicas": len(historico),
+        "fuente_pronostico": FUENTE_PRONOSTICO,
+        "inicio_pronostico": str(pronostico["Fecha"].min()),
+        "fin_pronostico": str(pronostico["Fecha"].max()),
+        "filas_pronostico": len(pronostico),
         "huecos_finales": [
-            x.isoformat() for x in faltantes(total, CAMPANIA_START, fin)
+            fecha.isoformat() for fecha in faltantes(total, CAMPANIA_START, fin)
         ],
         "advertencia": (
-            "ERA5-Seamless usa temperatura ERA5-Land y precipitación ERA5; "
-            "es reanálisis de grilla, no observación de estación. "
-            "MeteoBahía XML se usa solo como pronóstico."
+            "El histórico operativo corresponde a pronósticos MeteoBahía archivados, "
+            "no a observaciones. ERA5-Seamless y ECMWF fueron retirados."
         ),
     }
     ARCHIVO_ESTADO.parent.mkdir(parents=True, exist_ok=True)
-    ARCHIVO_ESTADO.write_text(
-        json.dumps(estado, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    temporal = ARCHIVO_ESTADO.with_suffix(".json.tmp")
+    temporal.write_text(json.dumps(estado, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporal.replace(ARCHIVO_ESTADO)
+
     print(
-        f"✅ ERA5-Seamless={len(era5)}; provisional={len(prov)}; "
-        f"MeteoBahía={len(pron)}; total={len(total)}"
+        f"✅ Histórico MeteoBahía={len(historico)}; "
+        f"pronóstico vigente={len(pronostico)}; total={len(total)}"
     )
     return total
 
