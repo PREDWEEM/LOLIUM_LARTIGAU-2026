@@ -1,29 +1,19 @@
 {
   "ejecucion_utc": "2026-07-28T00:04:47+00:00",
   "sitio": "Lartigau",
-  "latitud": -38.6166,
-  "longitud": -61.7,
   "inicio_campania": "2026-01-01",
-  "fuente_historica": "ERA5_SEAMLESS",
-  "fuente_temperatura_historica": "ERA5_LAND",
-  "fuente_precipitacion_historica": "ERA5",
-  "estado_era5_land": "ERA5_Seamless_remoto",
-  "tipo_historico": "Reanalisis",
-  "fin_era5_land": "2026-07-20",
-  "retardo_era5_land_dias": 5,
-  "fuente_puente": "ECMWF_IFS_HISTORICO",
-  "rangos_provisionales": [
-    {
-      "inicio": "2026-07-21",
-      "fin": "2026-07-26"
-    }
-  ],
-  "filas_provisionales": 6,
+  "fuente_historica": "METEOBAHIA_XML_ARCHIVADO",
+  "tipo_historico": "Historico_pronostico",
+  "calidad_historica": "Pronostico_MeteoBahia_archivado_no_observado",
+  "naturaleza_historico": "Pronosticos MeteoBahia archivados; no son observaciones de estacion",
+  "archivo_historico": "data/meteo_falcon_pronosticos_archivados_2026.csv",
+  "inicio_historico": "2026-01-01",
+  "fin_historico": "2026-07-26",
+  "filas_historicas": 207,
   "fuente_pronostico": "METEOBAHIA_XML_CORONEL_FALCON",
   "inicio_pronostico": "2026-07-27",
   "fin_pronostico": "2026-08-09",
-  "archivo_pronosticos_legacy": "data/meteo_falcon_pronosticos_archivados_2026.csv",
-  "archivo_pronosticos_legacy_creado_en_esta_ejecucion": true,
+  "filas_pronostico": 14,
   "huecos_finales": [],
-  "advertencia": "ERA5-Seamless usa temperatura ERA5-Land y precipitación ERA5; es reanálisis de grilla, no observación de estación. MeteoBahía XML se usa solo como pronóstico."
+  "advertencia": "El historico operativo corresponde a pronosticos MeteoBahia archivados, no a observaciones. ERA5-Seamless y ECMWF fueron retirados. El estado se regenerara en la proxima ejecucion del workflow."
 }

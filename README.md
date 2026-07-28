@@ -18,15 +18,16 @@ La implementación de este repositorio está orientada a **Lartigau** y debe uti
 
 ## Fuentes meteorológicas operativas
 
-La serie meteorológica distingue explícitamente el origen y el tipo de dato:
+La serie meteorológica utiliza exclusivamente información procedente de MeteoBahía:
 
-- **ERA5-Seamless**: reanálisis histórico desde el 1 de enero de 2026. Utiliza temperatura de ERA5-Land a 0,1° y precipitación de ERA5 a 0,25°, porque ERA5-Land no ofrece precipitación en la API histórica de Open-Meteo. Es información de grilla y no una observación puntual de estación.
-- **ECMWF IFS histórico**: puente provisional para fechas vencidas todavía no disponibles en ERA5-Seamless o para eventuales huecos internos.
-- **MeteoBahía XML — Coronel Falcón**: pronóstico determinístico utilizado exclusivamente desde la fecha actual en adelante.
+- **Histórico operativo**: `data/meteo_falcon_pronosticos_archivados_2026.csv`. Contiene los pronósticos de Coronel Falcón que fueron archivados durante 2026. Estos valores se utilizan como entrada histórica de PREDWEEM, pero **no son observaciones meteorológicas de estación**.
+- **Hoy y fechas futuras**: XML vigente de MeteoBahía para Coronel Falcón, descargado desde `https://meteobahia.com.ar/scripts/forecast/for-cf.xml`.
 
-El antiguo `meteo_daily.csv`, formado por pronósticos MeteoBahía que quedaban archivados al vencer, se conserva una sola vez en `data/meteo_falcon_pronosticos_archivados_2026.csv`. No se reutiliza como meteorología histórica.
+En cada actualización, el tramo anterior a la fecha actual se etiqueta como `METEOBAHIA_XML_ARCHIVADO / Historico_pronostico`, mientras que el tramo desde hoy se etiqueta como `METEOBAHIA_XML_CORONEL_FALCON / Pronostico`.
 
-El archivo operativo incluye `Fuente`, `TipoDato` y `CalidadDato` para evitar que un pronóstico vencido vuelva a confundirse con observación o reanálisis. Las columnas `TMAX`, `TMIN` y `Prec` continúan siendo compatibles con la ANN y el motor biofísico existentes.
+ERA5, ERA5-Land, ERA5-Seamless y el puente ECMWF histórico fueron retirados del flujo operativo. El archivo `meteo_daily.csv` se reconstruye diariamente combinando el archivo MeteoBahía archivado hasta ayer con el pronóstico XML vigente desde hoy. El propio archivo histórico se amplía con cada nueva emisión para conservar los pronósticos que luego pasan a formar parte del tramo histórico.
+
+El archivo operativo incluye `Fuente`, `TipoDato` y `CalidadDato` para evitar que los pronósticos archivados se confundan con observaciones. Las columnas `TMAX`, `TMIN` y `Prec` continúan siendo compatibles con la ANN y el motor biofísico existentes.
 
 ## Condiciones de uso
 
