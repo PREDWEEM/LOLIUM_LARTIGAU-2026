@@ -20,8 +20,8 @@ La implementación de este repositorio está orientada a **Lartigau** y debe uti
 
 La serie meteorológica distingue explícitamente el origen y el tipo de dato:
 
-- **ERA5-Land**: reanálisis histórico desde el 1 de enero de 2026. Es información de grilla y no una observación puntual de estación.
-- **ECMWF IFS histórico**: puente provisional para fechas vencidas todavía no disponibles en ERA5-Land o para eventuales huecos internos.
+- **ERA5-Seamless**: reanálisis histórico desde el 1 de enero de 2026. Utiliza temperatura de ERA5-Land a 0,1° y precipitación de ERA5 a 0,25°, porque ERA5-Land no ofrece precipitación en la API histórica de Open-Meteo. Es información de grilla y no una observación puntual de estación.
+- **ECMWF IFS histórico**: puente provisional para fechas vencidas todavía no disponibles en ERA5-Seamless o para eventuales huecos internos.
 - **MeteoBahía XML — Coronel Falcón**: pronóstico determinístico utilizado exclusivamente desde la fecha actual en adelante.
 
 El antiguo `meteo_daily.csv`, formado por pronósticos MeteoBahía que quedaban archivados al vencer, se conserva una sola vez en `data/meteo_falcon_pronosticos_archivados_2026.csv`. No se reutiliza como meteorología histórica.
