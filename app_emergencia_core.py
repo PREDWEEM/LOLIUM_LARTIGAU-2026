@@ -1277,9 +1277,9 @@ else:
 st.sidebar.markdown("## ⚙️ Fisiología y logística")
 alert_threshold = st.sidebar.slider(
     "Umbral de alerta temprana",
-    min_value=0.001,
+    min_value=0.0001,
     max_value=0.80,
-    value=0.005,
+    value=0.0001,
     step=0.001,
 )
 residual_days = st.sidebar.number_input(
