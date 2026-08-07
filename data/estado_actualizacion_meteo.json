@@ -1,5 +1,5 @@
 {
-  "ejecucion_utc": "2026-08-06T12:58:59+00:00",
+  "ejecucion_utc": "2026-08-07T11:49:24+00:00",
   "sitio": "Lartigau",
   "inicio_campania": "2026-01-01",
   "fuente_historica": "METEOBAHIA_XML_ARCHIVADO",
@@ -8,12 +8,12 @@
   "naturaleza_historico": "Pronosticos MeteoBahia archivados; no son observaciones de estacion",
   "archivo_historico": "data/meteo_falcon_pronosticos_archivados_2026.csv",
   "inicio_historico": "2026-01-01",
-  "fin_historico": "2026-08-05",
-  "filas_historicas": 217,
+  "fin_historico": "2026-08-06",
+  "filas_historicas": 218,
   "fuente_pronostico": "METEOBAHIA_XML_CORONEL_FALCON",
-  "inicio_pronostico": "2026-08-06",
-  "fin_pronostico": "2026-08-18",
-  "filas_pronostico": 13,
+  "inicio_pronostico": "2026-08-07",
+  "fin_pronostico": "2026-08-20",
+  "filas_pronostico": 14,
   "huecos_finales": [],
   "advertencia": "El histórico operativo corresponde a pronósticos MeteoBahía archivados, no a observaciones. ERA5-Seamless y ECMWF fueron retirados."
 }
