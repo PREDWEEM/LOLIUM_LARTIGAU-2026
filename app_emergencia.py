@@ -8,11 +8,21 @@ interfaz, una descarga Excel completa de los resultados generados.
 """
 from pathlib import Path
 
+from visualizacion_horizonte_pronostico import mostrar_horizonte_pronostico
+
 _CORE_APP = Path(__file__).with_name("app_emergencia_core.py")
 exec(
     compile(_CORE_APP.read_text(encoding="utf-8"), str(_CORE_APP), "exec"),
     globals(),
 )
+
+if (
+    "simulation" in globals()
+    and isinstance(simulation, pd.DataFrame)
+    and not simulation.empty
+):
+    st.divider()
+    mostrar_horizonte_pronostico(simulation, "Lartigau")
 
 
 def _fecha_reporte(valor):
@@ -85,23 +95,12 @@ if (
     metricas_reporte = pd.DataFrame(
         {
             "Métrica": [
-                "Pearson de flujos",
-                "NSE de flujos",
-                "KGE de flujos",
-                "RMSE acumulado",
-                "CCC acumulado",
-                "R2 acumulado",
-                "F1-Score de coincidencia",
-                "Exactitud global",
-                "Hits",
-                "Misses",
-                "Falsos positivos",
-                "Correctos negativos",
-                "PEC (%)",
-                "Lag control vs. pico de campo (días)",
-                "Lead time (días)",
-                "Desfase T50 (días)",
-                "Desfase del primer flujo (días)",
+                "Pearson de flujos", "NSE de flujos", "KGE de flujos",
+                "RMSE acumulado", "CCC acumulado", "R2 acumulado",
+                "F1-Score de coincidencia", "Exactitud global", "Hits", "Misses",
+                "Falsos positivos", "Correctos negativos", "PEC (%)",
+                "Lag control vs. pico de campo (días)", "Lead time (días)",
+                "Desfase T50 (días)", "Desfase del primer flujo (días)",
             ],
             "Valor": [
                 metricas_base.get("Pearson_Flujos", 0.0),
@@ -128,26 +127,15 @@ if (
     parametros_reporte = pd.DataFrame(
         {
             "Parámetro": [
-                "Latitud",
-                "Latencia fija (JD)",
-                "Ventana termoinhibición (días)",
-                "Umbral termoinhibición (°C)",
-                "Ventana de lluvia (días)",
-                "Choque hídrico (mm)",
-                "Fin choque hídrico (JD)",
-                "Umbral del primer pico",
-                "Persistencia del primer pico (días)",
-                "Cobertura de rastrojo (%)",
-                "Wmax superficial (mm)",
-                "Ke",
-                "Modulador térmico diagnóstico",
-                "Temperatura base (°C)",
-                "Temperatura óptima (°C)",
-                "Temperatura crítica (°C)",
-                "TT objetivo de control (°Cd)",
-                "TT límite de ventana (°Cd)",
-                "Residualidad del herbicida (días)",
-                "Umbral de alerta temprana",
+                "Latitud", "Latencia fija (JD)", "Ventana termoinhibición (días)",
+                "Umbral termoinhibición (°C)", "Ventana de lluvia (días)",
+                "Choque hídrico (mm)", "Fin choque hídrico (JD)",
+                "Umbral del primer pico", "Persistencia del primer pico (días)",
+                "Cobertura de rastrojo (%)", "Wmax superficial (mm)", "Ke",
+                "Modulador térmico diagnóstico", "Temperatura base (°C)",
+                "Temperatura óptima (°C)", "Temperatura crítica (°C)",
+                "TT objetivo de control (°Cd)", "TT límite de ventana (°Cd)",
+                "Residualidad del herbicida (días)", "Umbral de alerta temprana",
                 "Exponente Kr",
             ],
             "Valor": [
@@ -183,29 +171,13 @@ if (
         date_format="dd/mm/yyyy",
     ) as writer:
         _escribir_hoja(writer, simulation, "Resultados_Diarios")
-        _escribir_hoja(
-            writer,
-            globals().get("synchronized"),
-            "Validacion_Intervalos",
-        )
-        _escribir_hoja(
-            writer,
-            globals().get("field"),
-            "Observaciones_Campo",
-        )
+        _escribir_hoja(writer, globals().get("synchronized"), "Validacion_Intervalos")
+        _escribir_hoja(writer, globals().get("field"), "Observaciones_Campo")
         _escribir_hoja(writer, resumen_decision, "Resumen_Decision")
         _escribir_hoja(writer, metricas_reporte, "Metricas_Validacion")
         _escribir_hoja(writer, parametros_reporte, "Parametros_Modelo")
-        _escribir_hoja(
-            writer,
-            globals().get("thermal_curve"),
-            "Tiempo_Termico",
-        )
-        _escribir_hoja(
-            writer,
-            globals().get("optimizer_results"),
-            "Optimizador_2D",
-        )
+        _escribir_hoja(writer, globals().get("thermal_curve"), "Tiempo_Termico")
+        _escribir_hoja(writer, globals().get("optimizer_results"), "Optimizador_2D")
 
     reporte_excel_final.seek(0)
 
@@ -220,10 +192,7 @@ if (
         label="📊 Descargar resultados completos en Excel",
         data=reporte_excel_final.getvalue(),
         file_name="PREDWEEM_Lartigau_Resultados_Completos.xlsx",
-        mime=(
-            "application/vnd.openxmlformats-officedocument."
-            "spreadsheetml.sheet"
-        ),
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         width="stretch",
         key="descarga_excel_resultados_final_lartigau",
     )
