@@ -104,11 +104,11 @@ jobs:
           assert 'Fraccion_Maxima_15Abr' in patched
           assert 'EMERREL_REL_PCT' in patched
           assert 'Campo_Normalizado_PCT' in patched
+          assert 'y=simulation["EMERREL_REL_PCT"]' in patched
+          assert 'y=field["Campo_Normalizado_PCT"]' in patched
           assert 'text="Intensidad relativa de emergencia (%)"' in patched
           assert 'range=[0.0, 105.0]' in patched
-          assert 'EMERREL_LOG' not in patched
-          assert 'Campo_Normalizado_LOG' not in patched
-          assert 'Log10(EMERREL + 0,01)' not in patched
+          assert 'name="Intensidad relativa simulada (%)"' in patched
 
           values = [0.0, 0.05, 0.10, 0.20]
           maximum = max(values)
