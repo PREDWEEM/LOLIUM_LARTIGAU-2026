@@ -1,0 +1,15 @@
+Fecha,TMAX,TMIN,Prec,TMEDIA,GD_Tb2,Fuente,TipoDato,CalidadDato,Latitud_grilla,Longitud_grilla,Elevacion_grilla_m,Emision_UTC
+2026-09-15,12.000,4.000,0.000,8.000,6.000,METEOBAHIA_XML_CORONEL_FALCON,Pronostico,Pronostico_deterministico_Coronel_Falcon,,,,2026-09-15T15:29:28+00:00
+2026-09-16,17.000,0.000,0.000,8.500,6.500,METEOBAHIA_XML_CORONEL_FALCON,Pronostico,Pronostico_deterministico_Coronel_Falcon,,,,2026-09-15T15:29:28+00:00
+2026-09-17,26.000,9.000,0.200,17.500,15.500,METEOBAHIA_XML_CORONEL_FALCON,Pronostico,Pronostico_deterministico_Coronel_Falcon,,,,2026-09-15T15:29:28+00:00
+2026-09-18,25.000,11.000,0.000,18.000,16.000,METEOBAHIA_XML_CORONEL_FALCON,Pronostico,Pronostico_deterministico_Coronel_Falcon,,,,2026-09-15T15:29:28+00:00
+2026-09-19,28.000,12.000,0.000,20.000,18.000,METEOBAHIA_XML_CORONEL_FALCON,Pronostico,Pronostico_deterministico_Coronel_Falcon,,,,2026-09-15T15:29:28+00:00
+2026-09-20,23.000,12.000,11.900,17.500,15.500,METEOBAHIA_XML_CORONEL_FALCON,Pronostico,Pronostico_deterministico_Coronel_Falcon,,,,2026-09-15T15:29:28+00:00
+2026-09-21,19.000,9.000,0.400,14.000,12.000,METEOBAHIA_XML_CORONEL_FALCON,Pronostico,Pronostico_deterministico_Coronel_Falcon,,,,2026-09-15T15:29:28+00:00
+2026-09-22,15.000,6.000,0.000,10.500,8.500,METEOBAHIA_XML_CORONEL_FALCON,Pronostico,Pronostico_deterministico_Coronel_Falcon,,,,2026-09-15T15:29:28+00:00
+2026-09-23,21.000,5.000,0.000,13.000,11.000,METEOBAHIA_XML_CORONEL_FALCON,Pronostico,Pronostico_deterministico_Coronel_Falcon,,,,2026-09-15T15:29:28+00:00
+2026-09-24,25.000,11.000,0.000,18.000,16.000,METEOBAHIA_XML_CORONEL_FALCON,Pronostico,Pronostico_deterministico_Coronel_Falcon,,,,2026-09-15T15:29:28+00:00
+2026-09-25,24.000,12.000,0.600,18.000,16.000,METEOBAHIA_XML_CORONEL_FALCON,Pronostico,Pronostico_deterministico_Coronel_Falcon,,,,2026-09-15T15:29:28+00:00
+2026-09-26,24.000,11.000,1.200,17.500,15.500,METEOBAHIA_XML_CORONEL_FALCON,Pronostico,Pronostico_deterministico_Coronel_Falcon,,,,2026-09-15T15:29:28+00:00
+2026-09-27,25.000,9.000,0.000,17.000,15.000,METEOBAHIA_XML_CORONEL_FALCON,Pronostico,Pronostico_deterministico_Coronel_Falcon,,,,2026-09-15T15:29:28+00:00
+2026-09-28,22.000,9.000,0.600,15.500,13.500,METEOBAHIA_XML_CORONEL_FALCON,Pronostico,Pronostico_deterministico_Coronel_Falcon,,,,2026-09-15T15:29:28+00:00
