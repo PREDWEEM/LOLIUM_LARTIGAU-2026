@@ -45,6 +45,7 @@ jobs:
           from zoneinfo import ZoneInfo
 
           import pandas as pd
+          from update_meteo import CAMPANIA_END
 
           path = Path("meteo_daily.csv")
           historico_path = Path("data/meteo_falcon_pronosticos_archivados_2026.csv")
@@ -87,7 +88,11 @@ jobs:
           ).date()
           pasadas = fechas.dt.date < hoy
           futuras = fechas.dt.date >= hoy
-          if not pasadas.any() or not futuras.any():
+          if (fechas.dt.date > CAMPANIA_END).any():
+              raise SystemExit("Hay fechas posteriores al cierre de campaña.")
+          if hoy > CAMPANIA_END and fechas.max().date() != CAMPANIA_END:
+              raise SystemExit("La serie cerrada no llega al 1 de octubre.")
+          if not pasadas.any() or (hoy <= CAMPANIA_END and not futuras.any()):
               raise SystemExit("Deben existir histórico y pronóstico desde hoy.")
 
           if not df.loc[pasadas, "Fuente"].astype(str).eq(
@@ -125,7 +130,7 @@ jobs:
               raise SystemExit("La fuente histórica del estado es incorrecta.")
           if estado.get("tipo_historico") != "Historico_pronostico":
               raise SystemExit("El tipo histórico del estado es incorrecto.")
-          if estado.get("fuente_pronostico") != (
+          if futuras.any() and estado.get("fuente_pronostico") != (
               "METEOBAHIA_XML_CORONEL_FALCON"
           ):
               raise SystemExit("La fuente futura del estado no es MeteoBahía.")

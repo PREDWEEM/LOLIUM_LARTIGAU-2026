@@ -22,6 +22,7 @@ import requests
 
 ZONA_HORARIA = "America/Argentina/Buenos_Aires"
 CAMPANIA_START = date(2026, 1, 1)
+CAMPANIA_END = date(2026, 10, 1)  # Última fecha meteorológica, inclusive.
 TBASE = 2.0
 URL_XML = "https://meteobahia.com.ar/scripts/forecast/for-cf.xml"
 ARCHIVO_MAESTRO = Path("meteo_daily.csv")
@@ -148,6 +149,8 @@ def leer_archivo_historico() -> pd.DataFrame:
 
 
 def meteobahia() -> pd.DataFrame:
+    if hoy_argentina() > CAMPANIA_END:
+        return pd.DataFrame(columns=COLUMNAS)
     print("📡 MeteoBahía XML / Coronel Falcón")
     respuesta = get(
         URL_XML,
@@ -184,7 +187,7 @@ def meteobahia() -> pd.DataFrame:
     )
     hoy = hoy_argentina()
     fechas = pd.to_datetime(pronostico["Fecha"], errors="coerce")
-    pronostico = pronostico.loc[fechas.dt.date >= hoy].copy()
+    pronostico = pronostico.loc[(fechas.dt.date >= hoy) & (fechas.dt.date <= CAMPANIA_END)].copy()
     if pronostico.empty or pd.to_datetime(pronostico["Fecha"]).min().date() != hoy:
         raise ValueError("MeteoBahía no incluye la fecha actual.")
     return pronostico.reset_index(drop=True)
@@ -205,6 +208,9 @@ def validar(total: pd.DataFrame, hoy: date, fin: date) -> None:
     if total.empty or fechas.isna().any() or fechas.duplicated().any():
         raise ValueError("La serie está vacía o contiene fechas inválidas/duplicadas.")
 
+    if (fechas.dt.date > CAMPANIA_END).any():
+        raise ValueError("Hay fechas posteriores al cierre de campaña.")
+
     criticas = total[["TMAX", "TMIN", "TMEDIA", "Prec"]].apply(
         pd.to_numeric, errors="coerce"
     )
@@ -222,7 +228,7 @@ def validar(total: pd.DataFrame, hoy: date, fin: date) -> None:
 
     pasadas = fechas.dt.date < hoy
     futuras = fechas.dt.date >= hoy
-    if not pasadas.any() or not futuras.any():
+    if not pasadas.any() or (hoy <= CAMPANIA_END and not futuras.any()):
         raise ValueError("Deben existir histórico y pronóstico desde hoy.")
     if not total.loc[pasadas, "Fuente"].astype(str).eq(FUENTE_HISTORICA).all():
         raise ValueError("El histórico no proviene exclusivamente del archivo MeteoBahía.")
@@ -245,13 +251,14 @@ def actualizar_archivo(historico: pd.DataFrame, pronostico: pd.DataFrame) -> pd.
         .sort_values("Fecha")
         .drop_duplicates("Fecha", keep="last")
     )
+    combinado = combinado.loc[combinado["Fecha"].dt.date <= CAMPANIA_END].copy()
     combinado["Fecha"] = combinado["Fecha"].dt.strftime("%Y-%m-%d")
     return combinado.reset_index(drop=True)
 
 
 def ejecutar() -> pd.DataFrame:
     hoy = hoy_argentina()
-    ayer = hoy - timedelta(days=1)
+    ayer = min(hoy - timedelta(days=1), CAMPANIA_END)
     historico_base = leer_archivo_historico()
     pronostico = meteobahia()
 
@@ -277,7 +284,7 @@ def ejecutar() -> pd.DataFrame:
         .drop_duplicates("Fecha_dt", keep="last")
         .sort_values("Fecha_dt")
     )
-    fin = total["Fecha_dt"].max().date()
+    fin = CAMPANIA_END if hoy > CAMPANIA_END else total["Fecha_dt"].max().date()
     total["Fecha"] = total["Fecha_dt"].dt.strftime("%Y-%m-%d")
     total = columnas(total.drop(columns=["Fecha_dt"])).reset_index(drop=True)
     validar(total, hoy, fin)
@@ -288,17 +295,19 @@ def ejecutar() -> pd.DataFrame:
         ARCHIVO_HISTORICO,
         float_format="%.1f",
     )
-    DIR_PRONOSTICOS.mkdir(parents=True, exist_ok=True)
-    marca = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    escribir_csv(
-        pronostico,
-        DIR_PRONOSTICOS / f"meteobahia_coronel_falcon_{marca}.csv",
-    )
+    if not pronostico.empty:
+        DIR_PRONOSTICOS.mkdir(parents=True, exist_ok=True)
+        marca = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        escribir_csv(
+            pronostico,
+            DIR_PRONOSTICOS / f"meteobahia_coronel_falcon_{marca}.csv",
+        )
 
     estado = {
         "ejecucion_utc": utc_iso(),
         "sitio": "Lartigau",
         "inicio_campania": CAMPANIA_START.isoformat(),
+        "fin_campania": CAMPANIA_END.isoformat(),
         "fuente_historica": FUENTE_HISTORICA,
         "tipo_historico": TIPO_HISTORICO,
         "calidad_historica": CALIDAD_HISTORICA,
@@ -307,9 +316,9 @@ def ejecutar() -> pd.DataFrame:
         "inicio_historico": str(historico["Fecha"].min()),
         "fin_historico": str(historico["Fecha"].max()),
         "filas_historicas": len(historico),
-        "fuente_pronostico": FUENTE_PRONOSTICO,
-        "inicio_pronostico": str(pronostico["Fecha"].min()),
-        "fin_pronostico": str(pronostico["Fecha"].max()),
+        "fuente_pronostico": FUENTE_PRONOSTICO if len(pronostico) else None,
+        "inicio_pronostico": str(pronostico["Fecha"].min()) if len(pronostico) else None,
+        "fin_pronostico": str(pronostico["Fecha"].max()) if len(pronostico) else None,
         "filas_pronostico": len(pronostico),
         "huecos_finales": [
             fecha.isoformat() for fecha in faltantes(total, CAMPANIA_START, fin)
