@@ -133,7 +133,16 @@ NOTA_LARTIGAU = (
 if "weather_raw" in globals() and isinstance(weather_raw, pd.DataFrame) and not weather_raw.empty:
     st.divider()
     try:
-        from visualizacion_alerta_lolmu import mostrar_alerta_lolmu
+        import importlib
+
+        import alerta_lolmu as _alerta_lolmu
+        import visualizacion_alerta_lolmu as _vis_alerta
+
+        # Streamlit conserva en memoria los módulos ya importados entre ejecuciones: tras una actualización del
+        # repositorio, recargarlos evita usar una versión vieja
+        importlib.reload(_alerta_lolmu)
+        importlib.reload(_vis_alerta)
+        mostrar_alerta_lolmu = _vis_alerta.mostrar_alerta_lolmu
 
         _resultados_alerta = mostrar_alerta_lolmu(
             weather_raw,
@@ -143,6 +152,8 @@ if "weather_raw" in globals() and isinstance(weather_raw, pd.DataFrame) and not 
             t_crit=float(globals().get("t_critical", 30.0)),
             tt_control=float(globals().get("tt_control", 600.0)),
             tt_limite=float(globals().get("tt_limit", 800.0)),
+            cero_reciente_dias=10,  # conteo en cero en los últimos 10 días y sin plántulas: como máximo Atención
+            curva_desde_ultimo_cero=True,  # la curva acumulada arranca después del último conteo en cero
             localidad="Lartigau",
             nota_sitio=NOTA_LARTIGAU,
         )
