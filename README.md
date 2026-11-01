@@ -60,6 +60,12 @@ las variables `CAMPANIA_INICIO` y `CAMPANIA_FIN` la fijan a mano). Después del 
 o que no empiece el 1 de enero (si fallaron las primeras corridas). La app muestra la alerta cuando la campaña reúne al
 menos 30 días de clima.
 
+## Datos de la campaña 2026
+
+`data/campania_2026/` guarda una copia fija de la emergencia de *Lolium* (planilla original y CSV con fracción y acumulada)
+y del clima de la campaña 2026 (01/01–01/10). Esos son los datos con que se validó la alerta. La actualización automática no
+los modifica; ver `data/campania_2026/README.md`.
+
 ## Condiciones de uso
 
 No se concede licencia de uso por el solo hecho de acceder al repositorio. Cualquier utilización académica, técnica, institucional o comercial que exceda la visualización del contenido requiere autorización previa y escrita del titular de los derechos correspondientes.
