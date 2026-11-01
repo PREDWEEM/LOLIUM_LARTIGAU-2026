@@ -45,10 +45,10 @@ jobs:
           from zoneinfo import ZoneInfo
 
           import pandas as pd
-          from update_meteo import CAMPANIA_END
+          from update_meteo import ARCHIVO_HISTORICO, CAMPANIA_END, CAMPANIA_START, DIAS_TOLERANCIA_INICIO
 
           path = Path("meteo_daily.csv")
-          historico_path = Path("data/meteo_falcon_pronosticos_archivados_2026.csv")
+          historico_path = ARCHIVO_HISTORICO
           estado_path = Path("data/estado_actualizacion_meteo.json")
           if not path.exists() or not historico_path.exists() or not estado_path.exists():
               raise SystemExit("Faltan el archivo operativo, el histórico o el estado.")
@@ -92,7 +92,7 @@ jobs:
               raise SystemExit("Hay fechas posteriores al cierre de campaña.")
           if hoy > CAMPANIA_END and fechas.max().date() != CAMPANIA_END:
               raise SystemExit("La serie cerrada no llega al 1 de octubre.")
-          if not pasadas.any() or (hoy <= CAMPANIA_END and not futuras.any()):
+          if (not pasadas.any() and (hoy - CAMPANIA_START).days >= DIAS_TOLERANCIA_INICIO) or (hoy <= CAMPANIA_END and not futuras.any()):
               raise SystemExit("Deben existir histórico y pronóstico desde hoy.")
 
           if not df.loc[pasadas, "Fuente"].astype(str).eq(
@@ -147,7 +147,7 @@ jobs:
           git add \
             meteo_daily.csv \
             data/estado_actualizacion_meteo.json \
-            data/meteo_falcon_pronosticos_archivados_2026.csv \
+            data/meteo_falcon_pronosticos_archivados_*.csv \
             data/historico_pronosticos/ || true
 
           if git diff --cached --quiet; then

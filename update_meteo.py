@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Meteorología PREDWEEM Lartigau 2026.
+"""Meteorología PREDWEEM Lartigau.
+
+Campaña vigente: del 1 de enero al 1 de octubre del año en curso (después del 1 de octubre la serie queda
+cerrada y la carga se reinicia el 1 de enero siguiente, con un archivo histórico nuevo para ese año).
 
 Histórico operativo: pronósticos MeteoBahía archivados (no observaciones).
 Tramo vigente/futuro: MeteoBahía XML de Coronel Falcón.
@@ -8,6 +11,7 @@ No utiliza ERA5, ERA5-Land, ERA5-Seamless ni ECMWF histórico.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 import time
@@ -21,12 +25,26 @@ import pandas as pd
 import requests
 
 ZONA_HORARIA = "America/Argentina/Buenos_Aires"
-CAMPANIA_START = date(2026, 1, 1)
-CAMPANIA_END = date(2026, 10, 1)  # Última fecha meteorológica, inclusive.
+
+
+def _campania_vigente(hoy: date | None = None) -> tuple[date, date]:
+    """1 de enero – 1 de octubre del año en curso; CAMPANIA_INICIO / CAMPANIA_FIN (AAAA-MM-DD) la fijan a mano."""
+    hoy = hoy or datetime.now(ZoneInfo(ZONA_HORARIA)).date()
+    inicio = os.getenv("CAMPANIA_INICIO", "").strip()
+    fin = os.getenv("CAMPANIA_FIN", "").strip()
+    if inicio and fin:
+        return date.fromisoformat(inicio), date.fromisoformat(fin)
+    return date(hoy.year, 1, 1), date(hoy.year, 10, 1)
+
+
+CAMPANIA_START, CAMPANIA_END = _campania_vigente()  # CAMPANIA_END: última fecha meteorológica, inclusive.
+# Días desde el comienzo de la campaña en que se admite una serie sin histórico (el primer día solo hay
+# pronóstico) o que no empieza el 1 de enero (si alguna corrida de los primeros días falló).
+DIAS_TOLERANCIA_INICIO = 21
 TBASE = 2.0
 URL_XML = "https://meteobahia.com.ar/scripts/forecast/for-cf.xml"
 ARCHIVO_MAESTRO = Path("meteo_daily.csv")
-ARCHIVO_HISTORICO = Path("data/meteo_falcon_pronosticos_archivados_2026.csv")
+ARCHIVO_HISTORICO = Path(f"data/meteo_falcon_pronosticos_archivados_{CAMPANIA_START.year}.csv")
 ARCHIVO_ESTADO = Path("data/estado_actualizacion_meteo.json")
 DIR_PRONOSTICOS = Path("data/historico_pronosticos")
 FUENTE_HISTORICA = "METEOBAHIA_XML_ARCHIVADO"
@@ -130,8 +148,15 @@ def normalizar(
     )
 
 
+def en_tolerancia_inicio(hoy: date) -> bool:
+    return 0 <= (hoy - CAMPANIA_START).days < DIAS_TOLERANCIA_INICIO
+
+
 def leer_archivo_historico() -> pd.DataFrame:
     if not ARCHIVO_HISTORICO.exists():
+        if en_tolerancia_inicio(hoy_argentina()):
+            print(f"ℹ️ Campaña nueva: se crea {ARCHIVO_HISTORICO} con los pronósticos que se vayan archivando.")
+            return pd.DataFrame(columns=COLUMNAS)
         raise FileNotFoundError(
             f"No existe el histórico requerido: {ARCHIVO_HISTORICO}"
         )
@@ -203,6 +228,15 @@ def faltantes(df: pd.DataFrame, inicio: date, fin: date) -> list[date]:
     return [marca.date() for marca in esperadas.difference(presentes)]
 
 
+def inicio_continuidad(total: pd.DataFrame, hoy: date) -> date:
+    """Desde dónde se exige una serie continua: desde el primer día cargado si la carga empezó dentro de los primeros
+    días de la campaña (por ejemplo, si fallaron las corridas del 1 de enero); si no, desde el 1 de enero."""
+    if total.empty:
+        return CAMPANIA_START
+    primera = max(CAMPANIA_START, pd.to_datetime(total["Fecha"], errors="coerce").min().date())
+    return primera if (primera - CAMPANIA_START).days < DIAS_TOLERANCIA_INICIO else CAMPANIA_START
+
+
 def validar(total: pd.DataFrame, hoy: date, fin: date) -> None:
     fechas = pd.to_datetime(total["Fecha"], errors="coerce")
     if total.empty or fechas.isna().any() or fechas.duplicated().any():
@@ -219,7 +253,7 @@ def validar(total: pd.DataFrame, hoy: date, fin: date) -> None:
     if (criticas["TMAX"] < criticas["TMIN"]).any() or (criticas["Prec"] < 0).any():
         raise ValueError("Hay valores meteorológicos físicamente inválidos.")
 
-    huecos = faltantes(total, CAMPANIA_START, fin)
+    huecos = faltantes(total, inicio_continuidad(total, hoy), fin)
     if huecos:
         raise ValueError(
             "La serie no es continua: "
@@ -228,7 +262,7 @@ def validar(total: pd.DataFrame, hoy: date, fin: date) -> None:
 
     pasadas = fechas.dt.date < hoy
     futuras = fechas.dt.date >= hoy
-    if not pasadas.any() or (hoy <= CAMPANIA_END and not futuras.any()):
+    if (not pasadas.any() and not en_tolerancia_inicio(hoy)) or (hoy <= CAMPANIA_END and not futuras.any()):
         raise ValueError("Deben existir histórico y pronóstico desde hoy.")
     if not total.loc[pasadas, "Fuente"].astype(str).eq(FUENTE_HISTORICA).all():
         raise ValueError("El histórico no proviene exclusivamente del archivo MeteoBahía.")
@@ -313,15 +347,15 @@ def ejecutar() -> pd.DataFrame:
         "calidad_historica": CALIDAD_HISTORICA,
         "naturaleza_historico": "Pronosticos MeteoBahia archivados; no son observaciones de estacion",
         "archivo_historico": str(ARCHIVO_HISTORICO),
-        "inicio_historico": str(historico["Fecha"].min()),
-        "fin_historico": str(historico["Fecha"].max()),
+        "inicio_historico": str(historico["Fecha"].min()) if len(historico) else None,
+        "fin_historico": str(historico["Fecha"].max()) if len(historico) else None,
         "filas_historicas": len(historico),
         "fuente_pronostico": FUENTE_PRONOSTICO if len(pronostico) else None,
         "inicio_pronostico": str(pronostico["Fecha"].min()) if len(pronostico) else None,
         "fin_pronostico": str(pronostico["Fecha"].max()) if len(pronostico) else None,
         "filas_pronostico": len(pronostico),
         "huecos_finales": [
-            fecha.isoformat() for fecha in faltantes(total, CAMPANIA_START, fin)
+            fecha.isoformat() for fecha in faltantes(total, inicio_continuidad(total, hoy), fin)
         ],
         "advertencia": (
             "El histórico operativo corresponde a pronósticos MeteoBahía archivados, "
