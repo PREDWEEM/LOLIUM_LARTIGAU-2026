@@ -152,7 +152,7 @@ if "weather_raw" in globals() and isinstance(weather_raw, pd.DataFrame) and not 
             t_crit=float(globals().get("t_critical", 30.0)),
             tt_control=float(globals().get("tt_control", 600.0)),
             tt_limite=float(globals().get("tt_limit", 800.0)),
-            tope_hasta_ultimo_cero=True,  # hasta el último conteo en cero (sin plántulas), probabilidad por debajo de Atención
+            tope_hasta_ultimo_cero=True,  # semanas ya cerradas por un conteo posterior en cero: probabilidad por debajo de Atención
             curva_desde_ultimo_cero=True,  # la curva acumulada arranca después del último conteo en cero
             localidad="Lartigau",
             nota_sitio=NOTA_LARTIGAU,
