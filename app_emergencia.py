@@ -154,6 +154,7 @@ if "weather_raw" in globals() and isinstance(weather_raw, pd.DataFrame) and not 
             tt_limite=float(globals().get("tt_limit", 800.0)),
             tope_hasta_ultimo_cero=True,  # semanas ya cerradas por un conteo posterior en cero: probabilidad 0
             curva_desde_ultimo_cero=True,  # la curva acumulada arranca a mitad de camino entre el último cero y el primer conteo con plántulas
+            curva_tiempo_termico=True,  # con primeras plántulas, curva acumulada en tiempo térmico desde esa fecha
             localidad="Lartigau",
             nota_sitio=NOTA_LARTIGAU,
         )
