@@ -121,8 +121,8 @@ NOTA_LARTIGAU = (
     "**Validación en Lartigau.** El modelo se calibró en Bordenave y se probó, sin reajustarlo, con los conteos de "
     "Lartigau 2026 (15 fechas entre el 01/02 y el 30/08; 14 intervalos de 5 a 21 días; 3 con emergencia ≥ 5 % de la "
     "campaña por semana). Emitida al comienzo de cada intervalo con el clima de esta app, la alerta separó bien los "
-    "intervalos con flush: AUC 0,88 solo con clima y 0,94 con la fecha de primeras plántulas (19/02). Los tres flushes "
-    "quedaron en *Alerta*; también quedaron en *Alerta* 4 de los 11 intervalos sin flush.\n\n"
+    "intervalos con gran flujo: AUC 0,88 solo con clima y 0,94 con la fecha de primeras plántulas (19/02). Los tres grandes flujos "
+    "quedaron en *Alerta*; también quedaron en *Alerta* 4 de los 11 intervalos sin gran flujo.\n\n"
     "**Límites en Lartigau.** Una sola campaña. El clima es el de MeteoBahía para Coronel Falcón (pronósticos archivados, "
     "no observaciones de estación). En 2026 la emergencia fue más temprana que el calendario de Bordenave (65 % al 20/03 "
     "contra 39 % esperado). La alerta con conteos está calibrada con conteos semanales: con recorridas cada 2–3 semanas, "
@@ -187,7 +187,7 @@ if isinstance(_resultados_alerta, dict) and _resultados_alerta:
     st.subheader("📥 Descarga de resultados")
     st.caption(
         "Excel con los resultados que muestra la app para la fecha de emisión elegida: resumen (nivel y probabilidad de "
-        "flush, inicio y ventana de control 600–800 °Cd, emergencia acumulada esperada), alerta semanal, emergencia "
+        "gran flujo, inicio y ventana de control 600–800 °Cd, emergencia acumulada esperada), alerta semanal, emergencia "
         "acumulada con su rango, tiempo térmico diario desde el inicio, conteos usados, clima, parámetros y validación."
     )
     st.download_button(
