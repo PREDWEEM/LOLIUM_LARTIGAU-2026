@@ -40,7 +40,7 @@ fecha de emisión:
 1. el calendario medio de emergencia de LOLMU;
 2. la respuesta a las lluvias ya registradas (balance de agua y tiempo térmico de suelo);
 3. opcionalmente, la fecha en que se vieron las primeras plántulas del lote, que además ancla el reloj térmico (sin ese dato,
-   se usa el primer pico del motor PREDWEEM como inicio estimado);
+   la ventana de control no se calcula: el inicio no se estima con el clima);
 4. opcionalmente, conteos de plántulas (tabla o planilla Excel/CSV con una columna «Fecha» y una por marco).
 
 **Validación en Lartigau.** Sin reajustar el modelo, con los conteos de Lartigau 2026 (14 intervalos entre el 01/02 y el
