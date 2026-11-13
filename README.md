@@ -127,23 +127,31 @@ la emergencia se extiende hasta el invierno, y en sitios donde se corta antes av
 ## Residual a la siembra (guía de riesgo)
 
 Debajo de la alerta, un recuadro siempre visible muestra el riesgo de nacimientos después de la siembra para la **fecha de
-siembra prevista** (1/05–31/07; si no se carga, el 1/06 como referencia), en tres tarjetas: riesgo (alto, medio o bajo),
-emergencia después de sembrar (mediana) y recomendación (usar residual, según infestación, o solo si el lote está muy
-infestado). Se calcula con las 34 campañas de la región, como referencia, porque Lartigau tiene una sola campaña; se muestra también el valor de esa campaña (`residual` en `alerta_lolmu_params.json`):
+siembra prevista** (1/05–31/07; si no se carga, el 1/06 como referencia), en tres tarjetas: riesgo, emergencia después de
+sembrar (mediana) y recomendación. Se calcula con las 34 campañas de la región, como referencia, porque Lartigau tiene una sola campaña; se muestra también el valor de esa campaña (`residual` en `alerta_lolmu_params.json`):
 
-| Siembra | Campañas con ≥ 10 % de la emergencia después de sembrar | Mediana | Riesgo | Campañas del sitio |
+| Siembra | Emergencia después de sembrar (mediana) | Riesgo | Campañas por nivel: muy alto / alto / medio / bajo | Campañas del sitio |
 |---|---|---|---|---|
-| 1/05 | 59% | 13 % | Alto | 2026: 9 % |
-| 15/05 | 35% | 8 % | Medio | 2026: 8 % |
-| 1/06 | 26% | 4 % | Medio | 2026: 8 % |
-| 15/06 | 15% | 3 % | Bajo | 2026: 8 % |
-| 1/07 | 9% | 2 % | Bajo | 2026: 7 % |
+| 1/05 | 12,6 % | Muy alto | 82 % / 12 % / 6 % / 0 % | 2026: 8,9 % |
+| 15/05 | 8,2 % | Muy alto | 62 % / 21 % / 18 % / 0 % | 2026: 8,5 % |
+| 1/06 | 3,6 % | Alto | 44 % / 26 % / 21 % / 9 % | 2026: 7,6 % |
+| 15/06 | 2,8 % | Alto | 41 % / 21 % / 15 % / 24 % | 2026: 7,6 % |
+| 1/07 | 1,5 % | Medio | 29 % / 12 % / 26 % / 32 % | 2026: 6,8 % |
 
-Riesgo alto: ≥ 40 % de las campañas con ≥ 10 % de emergencia posterior; medio: 20–40 %; bajo: < 20 %. Es un **riesgo
-histórico, no una predicción de la campaña**: ni la fecha de primeras plántulas ni el clima anticiparon cuánta emergencia
-queda después de la siembra. Como la decisión depende de las plantas por m², en lotes con alta infestación aun una fracción
-chica puede ser más de 100 plantas/m². La necesidad de un graminicida post-emergente no se puede anticipar: se recomienda
-recorrer el cultivo 30–45 días después de la siembra.
+El nivel de riesgo surge de la emergencia típica (mediana) de la campaña ocurrida después de la fecha de siembra:
+
+| Riesgo | Emergencia después de sembrar | Recomendación |
+|---|---|---|
+| 🔴 Muy alto | ≥ 5 % | Usar residual |
+| 🟠 Alto | 2–5 % | Residual recomendado |
+| 🟡 Medio | 0,5–2 % | Según infestación: residual si el lote tiene alta infestación o antecedentes de raigrás |
+| 🟢 Bajo | < 0,5 % | Residual solo en lotes muy infestados |
+
+Debajo de las tarjetas se indica qué proporción de las campañas cayó en cada nivel. Es un **riesgo histórico, no una
+predicción de la campaña**: ni la fecha de primeras plántulas ni el clima anticiparon cuánta emergencia queda después de
+la siembra. Como la decisión depende de las plantas por m², en lotes con alta infestación aun una fracción chica puede ser
+más de 100 plantas/m². La necesidad de un graminicida post-emergente no se puede anticipar: se recomienda recorrer el
+cultivo 30–45 días después de la siembra.
 
 ## Datos de la campaña 2026
 
