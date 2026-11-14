@@ -80,8 +80,8 @@ else:
     st.sidebar.markdown("## 🌾 PREDWEEM")
     st.sidebar.caption("Motor predictivo Lolium — Lartigau")
 
-st.sidebar.markdown("## ⚙️ Ventana de control")
-st.sidebar.caption("Tiempo térmico sobre la temperatura media del aire y objetivos de la ventana post-emergente.")
+st.sidebar.markdown("## ⚙️ Graminicida de barbecho")
+st.sidebar.caption("Tiempo térmico sobre la temperatura media del aire y ventana del graminicida de barbecho (600–800 °Cd: raigrás de 4 a 6 macollos).")
 _col_t1, _col_t2 = st.sidebar.columns(2)
 with _col_t1:
     t_base = st.number_input("T Base", value=T_BASE_PREDETERMINADA, step=0.5)
@@ -89,8 +89,8 @@ with _col_t2:
     t_optimum = st.number_input("T Óptima Max", value=T_OPTIMA_PREDETERMINADA, step=1.0)
 t_critical = st.sidebar.slider("T Crítica (Stop)", 26.0, 42.0, float(T_CRITICA_PREDETERMINADA))
 st.sidebar.markdown("**Objetivos (°Cd)**")
-tt_control = st.sidebar.number_input("TT Control Post-emergente (°Cd)", min_value=0, value=TT_CONTROL_PREDETERMINADO, step=10)
-tt_limit = st.sidebar.number_input("Límite Ventana (°Cd)", min_value=0, value=TT_LIMITE_PREDETERMINADO, step=10)
+tt_control = st.sidebar.number_input("TT inicio de la ventana (4 macollos, °Cd)", min_value=0, value=TT_CONTROL_PREDETERMINADO, step=10)
+tt_limit = st.sidebar.number_input("TT fin de la ventana (6 macollos, °Cd)", min_value=0, value=TT_LIMITE_PREDETERMINADO, step=10)
 
 # parámetros del motor PREDWEEM en sus valores por defecto (controles retirados de la página)
 alert_threshold = 0.0001
@@ -194,7 +194,7 @@ if isinstance(_resultados_alerta, dict) and _resultados_alerta:
     st.subheader("📥 Descarga de resultados")
     st.caption(
         "Excel con los resultados que muestra la app para la fecha de emisión elegida: resumen (nivel y probabilidad de "
-        "gran flujo, inicio y ventana de control 600–800 °Cd, emergencia acumulada esperada), alerta semanal, emergencia "
+        "gran flujo, inicio y ventana del graminicida de barbecho 600–800 °Cd, emergencia acumulada esperada), alerta semanal, emergencia "
         "acumulada con su rango, tiempo térmico diario desde el inicio, conteos usados, clima, parámetros y validación."
     )
     st.download_button(
