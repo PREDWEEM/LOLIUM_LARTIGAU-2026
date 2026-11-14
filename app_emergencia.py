@@ -14,8 +14,8 @@ La aplicación científica original se conserva en ``app_emergencia_core.py``. A
   valores por defecto) y sus avisos; la barra lateral conserva los parámetros de la ventana de control.
 
 El motor sigue calculando como antes: su primer pico se usa como inicio estimado del reloj térmico hasta
-que se informa la fecha de las primeras plántulas. La alerta (``alerta_lolmu.py``) es la calibrada con
-17 campañas de Bordenave y validada con los conteos de Lartigau 2026.
+que se informa la fecha de las primeras plántulas. La alerta (``alerta_lolmu.py``) es la del paquete lolium-comun,
+validada con los conteos de Lartigau 2026.
 """
 from pathlib import Path
 
@@ -124,13 +124,13 @@ if "simulation" in globals() and isinstance(simulation, pd.DataFrame) and not si
     mostrar_horizonte_pronostico(simulation, "Lartigau")
 
 NOTA_LARTIGAU = (
-    "**Validación en Lartigau.** El modelo se calibró en Bordenave y se probó, sin reajustarlo, con los conteos de "
+    "**Validación en Lartigau.** El modelo se probó, sin reajustarlo, con los conteos de "
     "Lartigau 2026 (15 fechas entre el 01/02 y el 30/08; 14 intervalos de 5 a 21 días; 3 con emergencia ≥ 5 % de la "
     "campaña por semana). Emitida al comienzo de cada intervalo con el clima de esta app, la alerta separó bien los "
     "intervalos con gran flujo: AUC 0,88 solo con clima y 0,94 con la fecha de primeras plántulas (19/02). Los tres grandes flujos "
     "quedaron en *Alerta*; también quedaron en *Alerta* 4 de los 11 intervalos sin gran flujo.\n\n"
     "**Límites en Lartigau.** Una sola campaña. El clima es el de MeteoBahía para Coronel Falcón (pronósticos archivados, "
-    "no observaciones de estación). En 2026 la emergencia fue más temprana que el calendario de Bordenave (65 % al 20/03 "
+    "no observaciones de estación). En 2026 la emergencia fue más temprana que el calendario de referencia regional (65 % al 20/03 "
     "contra 39 % esperado). La alerta con conteos está calibrada con conteos semanales: con recorridas cada 2–3 semanas, "
     "conviene usar sobre todo la fecha de primeras plántulas."
 )
